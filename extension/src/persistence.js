@@ -68,7 +68,13 @@ export async function saveState(runtime, memory) {
     memory: memory ? serializeMemory(memory) : null,
 
     // Loop type (needed to resume the correct loop)
-    loopType: runtime._loopType || 'simple' // 'simple' | 'batch'
+    loopType: runtime._loopType || 'simple', // 'simple' | 'batch'
+
+    // Direct Tab mode
+    isDirectTab: runtime.isDirectTab || false,
+
+    // Log buffer (for UI restoration after SW wake)
+    logBuffer: runtime._logBuffer ? runtime._logBuffer.slice(-runtime._logBufferMax) : []
   };
 
   try {
@@ -205,7 +211,9 @@ function serializeMemory(memory) {
     userContext: memory.userContext,
     errors: memory.errors,
     startedAt: memory.startedAt,
-    completedAt: memory.completedAt
+    completedAt: memory.completedAt,
+    searchPageUrl: memory.searchPageUrl || '',
+    searchPageTitle: memory.searchPageTitle || ''
   };
 }
 
@@ -229,6 +237,8 @@ export function deserializeMemory(data, TaskMemoryClass) {
   memory.errors = data.errors || [];
   memory.startedAt = data.startedAt || 0;
   memory.completedAt = data.completedAt || 0;
+  memory.searchPageUrl = data.searchPageUrl || '';
+  memory.searchPageTitle = data.searchPageTitle || '';
 
   return memory;
 }

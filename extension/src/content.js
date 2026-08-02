@@ -496,6 +496,147 @@
   }
 
   // ============================================================
+  // §12a  CLICK AT COORDINATES (for vision-based clicking)
+  // ============================================================
+
+  /**
+   * Click at specific (x, y) viewport coordinates.
+   * Used when the AI sees a button on the screenshot but there's no usable DOM selector
+   * (Canvas, SVG, cross-origin iframe, etc.).
+   */
+  function clickAtCoords(x, y) {
+    const el = document.elementFromPoint(x, y);
+    if (!el) return { ok: false, error: 'no_element_at_coords', x, y };
+
+    const opts = {
+      bubbles: true, cancelable: true, view: window,
+      clientX: x, clientY: y,
+      button: 0, buttons: 1
+    };
+
+    el.dispatchEvent(new PointerEvent('pointerover', opts));
+    el.dispatchEvent(new PointerEvent('pointerenter', opts));
+    el.dispatchEvent(new MouseEvent('mouseover', opts));
+    el.dispatchEvent(new MouseEvent('mouseenter', opts));
+    el.dispatchEvent(new PointerEvent('pointerdown', opts));
+    el.dispatchEvent(new MouseEvent('mousedown', opts));
+    el.focus();
+    el.dispatchEvent(new PointerEvent('pointerup', opts));
+    el.dispatchEvent(new MouseEvent('mouseup', opts));
+    el.dispatchEvent(new PointerEvent('pointerout', opts));
+    el.dispatchEvent(new PointerEvent('pointerleave', opts));
+    el.dispatchEvent(new MouseEvent('click', opts));
+
+    try { el.click(); } catch (_) {}
+
+    return {
+      ok: true,
+      x, y,
+      target: el.tagName.toLowerCase(),
+      text: (el.innerText || el.textContent || '').trim().slice(0, 100)
+    };
+  }
+
+  // ============================================================
+  // §12b  HOVER (triggers :hover CSS, dropdowns, tooltips)
+  // ============================================================
+
+  function hoverElement(selector) {
+    const el = document.querySelector(selector);
+    if (!el) return { ok: false, error: 'element_not_found', selector };
+
+    el.scrollIntoView({ block: 'center', inline: 'center' });
+    const r = rect(el);
+    const opts = {
+      bubbles: true, cancelable: true, view: window,
+      clientX: r.x, clientY: r.y,
+      button: 0, buttons: 0
+    };
+
+    el.dispatchEvent(new PointerEvent('pointerover', opts));
+    el.dispatchEvent(new PointerEvent('pointerenter', opts));
+    el.dispatchEvent(new MouseEvent('mouseover', opts));
+    el.dispatchEvent(new MouseEvent('mouseenter', opts));
+    el.dispatchEvent(new PointerEvent('pointermove', opts));
+    el.dispatchEvent(new MouseEvent('mousemove', opts));
+
+    return { ok: true, selector, coords: { x: r.x, y: r.y } };
+  }
+
+  // ============================================================
+  // §12c  SELECT OPTION (explicit dropdown value selection)
+  // ============================================================
+
+  function selectOption(selector, value) {
+    const el = document.querySelector(selector);
+    if (!el) return { ok: false, error: 'element_not_found', selector };
+    if (el.tagName !== 'SELECT') return { ok: false, error: 'not_a_select', selector, tag: el.tagName };
+
+    // Check if option exists
+    const option = Array.from(el.options).find(o => o.value === value || o.textContent.trim() === value);
+    if (!option) {
+      // Try partial match
+      const partial = Array.from(el.options).find(o =>
+        o.value.includes(value) || o.textContent.trim().includes(value)
+      );
+      if (!partial) return { ok: false, error: 'option_not_found', selector, value, available: Array.from(el.options).slice(0, 10).map(o => o.value) };
+      value = partial.value;
+    }
+
+    el.focus();
+    el.value = value;
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+
+    return { ok: true, selector, selected: value };
+  }
+
+  // ============================================================
+  // §12d  UPLOAD FILE (via data URL → File object → DataTransfer)
+  // ============================================================
+
+  /**
+   * Set a file on a file input element using DataTransfer API.
+   * The caller sends a base64 data URL + filename; this function
+   * creates a File object and assigns it to the input.
+   */
+  function uploadFile(selector, dataUrl, fileName) {
+    const el = document.querySelector(selector);
+    if (!el) return { ok: false, error: 'element_not_found', selector };
+    if (el.tagName !== 'INPUT' || el.type !== 'file') {
+      return { ok: false, error: 'not_file_input', selector, tag: el.tagName, type: el.type };
+    }
+
+    try {
+      // Parse data URL: "data:application/pdf;base64,JVBERi0..."
+      const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (!match) return { ok: false, error: 'invalid_data_url' };
+
+      const mimeType = match[1];
+      const b64 = match[2];
+      const byteString = atob(b64);
+      const ab = new ArrayBuffer(byteString.length);
+      const ia = new Uint8Array(ab);
+      for (let i = 0; i < byteString.length; i++) {
+        ia[i] = byteString.charCodeAt(i);
+      }
+
+      const file = new File([ab], fileName || 'upload.pdf', { type: mimeType });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      el.files = dt.files;
+
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+
+      return { ok: true, selector, fileName: file.name, fileSize: file.size, mimeType };
+    } catch (e) {
+      return { ok: false, error: 'upload_failed', details: e.message };
+    }
+  }
+
+  // ============================================================
   // §13  WAIT FOR COMPLETION (local polling engine, no AI calls)
   // ============================================================
 
@@ -737,6 +878,18 @@
           break;
         case 'getCoords':
           result = getElementCoords(msg.selector);
+          break;
+        case 'hover':
+          result = hoverElement(msg.selector);
+          break;
+        case 'selectOption':
+          result = selectOption(msg.selector, msg.value);
+          break;
+        case 'uploadFile':
+          result = uploadFile(msg.selector, msg.dataUrl, msg.fileName);
+          break;
+        case 'clickCoords':
+          result = clickAtCoords(msg.x, msg.y);
           break;
         case 'wait_for_completion':
           waitForCompletion(msg.condition, msg.timeoutMs || 120000).then(sendResponse);

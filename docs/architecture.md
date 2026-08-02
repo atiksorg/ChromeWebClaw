@@ -4,6 +4,8 @@
 
 WebClaw is a Chrome extension that uses AI vision to autonomously interact with websites. It runs in a dedicated background tab, captures screenshots, and executes actions based on AI decisions.
 
+**v5.0 — Vision-First Architecture**: The primary mode is now "Vision-First" — a single unified ReAct loop where the AI model sees ONLY the screenshot (no DOM snapshots, no CSS selectors) and returns normalized coordinates (0–1000) for all actions. This eliminates fragility from DOM changes, CSS selector parsing, and ad/tracker redirects. The legacy DOM-based mode is still available as a fallback via `vision_mode: false` setting.
+
 ## Components
 
 ### 1. Popup (popup.html/js)
@@ -55,15 +57,76 @@ User Input → Popup → Background Service Worker
 
 ## Key Design Decisions
 
-### 1. Dedicated Agent Tab
+### Vision-First Architecture (v5.0)
+
+#### Core Loop
+```
+┌─ Screenshot (CDP Page.captureScreenshot)
+│   ↓
+├─ Vision Prompt (screenshot + task + compact action log)
+│   ↓
+├─ AI Model (returns JSON: {tool, x, y, think})
+│   ↓
+├─ Coordinate Normalization (0–1000 → viewport pixels)
+│   ↓
+├─ CDP Trusted Events (Input.dispatchMouseEvent, Input.insertText)
+│   ↓
+├─ Observation + History Update
+│   ↓
+└─ Repeat (or done/fail)
+```
+
+#### Normalized Coordinate System
+The AI model returns coordinates in a 0–1000 normalized space:
+- (0, 0) = top-left of viewport
+- (1000, 1000) = bottom-right of viewport
+- (500, 500) = center
+
+The runtime scales these to actual viewport pixels:
+```
+actualX = (normalizedX / 1000) * viewportWidth
+actualY = (normalizedY / 1000) * viewportHeight
+```
+
+This eliminates DPR/zoom issues and works regardless of screen resolution.
+
+#### Visual Stagnation Detection
+If 8 consecutive screenshots produce identical hashes (sampled base64 fingerprint), the system auto-scrolls as a recovery action. The stagnation count is also injected into the prompt as a hint to the model.
+
+#### Vision Tools
+| Tool | Description |
+|------|-------------|
+| `click_at(x, y)` | CDP trusted click at normalized coords |
+| `type_at(x, y, text)` | Click → Clear (Ctrl+A+Del) → Insert text via CDP |
+| `press_key(key)` | CDP key press (Enter, Tab, Escape, etc.) |
+| `scroll(direction, amount, x, y)` | CDP mouseWheel |
+| `hover_at(x, y)` | CDP mouseMoved (triggers :hover CSS) |
+| `select_at(x, y, value)` | Click select + Runtime.evaluate to set value |
+| `checkbox_at(x, y)` | Toggle click |
+| `navigate(url)` | Tab navigation |
+| `back` | History.back() |
+| `wait(seconds)` | Sleep |
+| `done(answer)` | Task complete |
+| `fail(reason)` | Task failed |
+
+#### Token Economy
+Only the last 8 actions are sent as compact text. The model receives:
+- Current screenshot (1 image)
+- Task description + user context
+- Compact action log (text only, ~500 tokens)
+- Stagnation hint (if applicable)
+
+No DOM snapshots, no CSS selector lists, no element descriptions.
+
+### 1. Dedicated Agent Tab (Legacy + Vision)
 - **Why**: CaptureVisibleTab works on active tab, agent needs to stay active
 - **Benefit**: User can work on other tabs while agent runs
 
-### 2. Frame-based Injection
+### 2. Frame-based Injection (Legacy DOM mode)
 - **Why**: Content script runs inside iframe, not parent page
 - **Benefit**: Better isolation, avoids conflicts with host page
 
-### 3. Screenshot + DOM Hybrid
+### 3. Screenshot + DOM Hybrid (Legacy DOM mode)
 - **Why**: Model sees both visual layout and structured elements
 - **Benefit**: More accurate element identification
 

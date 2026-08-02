@@ -6,10 +6,22 @@
 // Extracted from background.js to separate infrastructure concerns from agent logic.
 
 import { runtime, sleep, broadcast, CDP_VERSION } from './bus.js';
+import { getSettings } from './settings.js';
 
 // ============================================================
 // CDP LIFECYCLE
 // ============================================================
+
+// Track consecutive detach count to prevent infinite detach→reattach cycles
+let _consecutiveDetaches = 0;
+const MAX_DETACH_REATTACH = 3;
+
+/**
+ * Reset the consecutive detach counter (called on successful attach or when starting a new session).
+ */
+export function resetCdpDetachCounter() {
+  _consecutiveDetaches = 0;
+}
 
 /**
  * Attach to the agent tab via CDP. This enables:
@@ -26,12 +38,14 @@ export async function cdpAttach(tabId) {
     await chrome.debugger.attach({ tabId }, CDP_VERSION);
     runtime.cdpAttached = true;
     runtime.cdpTarget = { tabId };
+    _consecutiveDetaches = 0; // Reset counter on successful attach
     broadcast({ kind: 'log', text: `CDP attached to tab ${tabId}` });
   } catch (e) {
     // May already be attached by another debugger
     if (e.message && e.message.includes('already attached')) {
       runtime.cdpAttached = true;
       runtime.cdpTarget = { tabId };
+      _consecutiveDetaches = 0;
     } else {
       broadcast({ kind: 'log', level: 'error', text: `CDP attach failed: ${e.message}` });
       throw e;
@@ -98,6 +112,17 @@ export async function cdpClick(x, y) {
  */
 export async function cdpType(text) {
   await cdpSend('Input.insertText', { text });
+}
+
+/**
+ * Perform a trusted hover via CDP Input.dispatchMouseEvent.
+ * Moves the mouse to (x, y) and holds position — triggers :hover CSS,
+ * reveals dropdown menus, shows tooltips, etc.
+ */
+export async function cdpHover(x, y) {
+  await cdpSend('Input.dispatchMouseEvent', {
+    type: 'mouseMoved', x, y, button: 'none', clickCount: 0
+  });
 }
 
 /**
@@ -287,7 +312,6 @@ export async function waitForDomStability(timeoutMs = 8000, stableMs = 300) {
  * 3. DOM stable: no mutations for 300ms
  */
 export async function waitPageReady() {
-  const { getSettings } = await import('./settings.js');
   const settings = await getSettings();
   const networkIdleMs = settings.spa_network_idle_ms || 500;
   const domStableMs = settings.spa_dom_stable_ms || 300;

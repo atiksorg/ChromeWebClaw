@@ -40,10 +40,15 @@ export const runtime = {
   domStablePromise: null,
   // Persistence: loop type (needed to resume correct loop after SW wake)
   _loopType: null,        // 'simple' | 'batch'
+  // Direct Tab mode: work in user's active tab (no agent.html/iframe)
+  isDirectTab: false,
   // Persistence: ephemeral references (NOT serialized, re-created on wake)
   _memory: null,
   _sessionLogger: null,
-  _confirmResolve: null
+  _confirmResolve: null,
+  // Log buffer (ring buffer for popup to retrieve on re-open)
+  _logBuffer: [],
+  _logBufferMax: 300
 };
 
 /**
@@ -69,6 +74,9 @@ export function rehydrateRuntime(state) {
   runtime.startedAt = state.startedAt ?? 0;
   runtime.totalTokensUsed = state.totalTokensUsed ?? 0;
   runtime._loopType = state.loopType ?? 'simple';
+  runtime.isDirectTab = state.isDirectTab ?? false;
+  // Restore log buffer so UI can show history after SW wake
+  runtime._logBuffer = Array.isArray(state.logBuffer) ? state.logBuffer : [];
   // Mark that this session was resumed (not freshly started)
   runtime._resumed = true;
 }
@@ -97,12 +105,37 @@ export function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
  */
 export function broadcast(msg) {
   msg = { ...msg, ts: Date.now() };
+  // Buffer important events so popup can restore state on re-open
+  if (msg.kind === 'log' || msg.kind === 'action' || msg.kind === 'observation' ||
+      msg.kind === 'phase_changed' || msg.kind === 'plan_ready' ||
+      msg.kind === 'batch_started' || msg.kind === 'batch_progress' ||
+      msg.kind === 'batch_finished' || msg.kind === 'finished' ||
+      msg.kind === 'step_start' || msg.kind === 'tokens_update' ||
+      msg.kind === 'started' || msg.kind === 'confirmation_required' ||
+      msg.kind === 'paused_for_confirmation' || msg.kind === 'resumed_after_interrupt' ||
+      msg.kind === 'agent_thought' || msg.kind === 'model_call_start' ||
+      msg.kind === 'model_call_end' || msg.kind === 'api_call' ||
+      msg.kind === 'infra' || msg.kind === 'screenshot_captured' ||
+      msg.kind === 'snapshot_ready' || msg.kind === 'selector_sanitized') {
+    runtime._logBuffer.push(msg);
+    if (runtime._logBuffer.length > runtime._logBufferMax) {
+      runtime._logBuffer.splice(0, runtime._logBuffer.length - runtime._logBufferMax);
+    }
+  }
   // popup
-  chrome.runtime.sendMessage({ kind: 'agent_event', ...msg }).catch(() => {});
+  chrome.runtime.sendMessage({ _agentEvent: true, ...msg }).catch(() => {});
   // log page (lives in extension pages, so use tabs.sendMessage to all extension pages)
   chrome.tabs.query({ url: chrome.runtime.getURL('src/logs.html') }, (tabs) => {
     for (const t of tabs || []) {
-      chrome.tabs.sendMessage(t.id, { kind: 'agent_event', ...msg }).catch(() => {});
+      chrome.tabs.sendMessage(t.id, { _agentEvent: true, ...msg }).catch(() => {});
+    }
+  });
+  // overlay widget on all pages (content scripts)
+  // NOTE: do NOT skip agentTabId here — in Direct Tab mode the agent tab IS
+  // the user's active tab, and the overlay widget there needs to receive events.
+  chrome.tabs.query({}, (tabs) => {
+    for (const t of tabs || []) {
+      chrome.tabs.sendMessage(t.id, { _agentEvent: true, ...msg }).catch(() => {});
     }
   });
 }

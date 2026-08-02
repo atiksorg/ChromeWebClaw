@@ -36,10 +36,11 @@ import {
   ensureContentScript, callFrame, getSnapshot
 } from './agent_tab.js';
 import { performAction } from './action_dispatch.js';
-import { buildAgentPrompt, safeParseAction } from './prompt_builder.js';
+import { buildAgentPrompt, safeParseAction, extractReasoning } from './prompt_builder.js';
 import { TaskMemory, PHASES } from './task_memory.js';
 import { planTask } from './planner.js';
 import { runBatch } from './batch_executor.js';
+import { runVisionLoop, resumeVisionLoop } from './vision_loop.js';
 import { SessionLogger } from './session_logger.js';
 import {
   saveState, loadState, clearState, isSessionActive,
@@ -54,6 +55,7 @@ import {
 async function startSimpleLoop({ task, context, options, memory, sessionLogger, resumeFromStep }) {
   const settings = await getSettings();
   const stepCap = options?.stepCap || STEP_CAP_DEFAULT;
+  const tokenLimit = settings.token_limit || 1000000;
 
   memory.startedAt = memory.startedAt || Date.now();
   memory.setPhase(PHASES.EXECUTING);
@@ -73,8 +75,10 @@ async function startSimpleLoop({ task, context, options, memory, sessionLogger, 
       await setIconMode('working');
 
       // 0) Wait for page readiness (readyState + network idle + DOM stable)
+      broadcast({ kind: 'infra', text: '⏳ Ожидание готовности страницы...' });
       try {
         await waitPageReady();
+        broadcast({ kind: 'infra', text: '✅ Страница готова' });
       } catch (e) {
         broadcast({ kind: 'log', level: 'error', text: 'waitPageReady failed: ' + e.message });
       }
@@ -82,7 +86,10 @@ async function startSimpleLoop({ task, context, options, memory, sessionLogger, 
       // 1) capture screenshot (via CDP if available)
       let screenshot = null;
       try {
+        broadcast({ kind: 'infra', text: '📸 Делаем скриншот...' });
         screenshot = await captureScreenshot();
+        broadcast({ kind: 'screenshot_captured', step: runtime.step, hasImage: !!screenshot });
+        broadcast({ kind: 'infra', text: '📸 Скриншот получен' });
       } catch (e) {
         broadcast({ kind: 'log', level: 'error', text: 'screenshot failed: ' + e.message });
       }
@@ -90,7 +97,10 @@ async function startSimpleLoop({ task, context, options, memory, sessionLogger, 
       // 2) DOM snapshot
       let snapshot = { elements: [], viewport: {}, url: '', title: '' };
       try {
+        broadcast({ kind: 'infra', text: '🔍 Анализируем DOM...' });
         snapshot = await getSnapshot();
+        broadcast({ kind: 'snapshot_ready', step: runtime.step, elementCount: snapshot.elements?.length || 0 });
+        broadcast({ kind: 'infra', text: `🔍 Найдено ${snapshot.elements?.length || 0} элементов на странице` });
       } catch (e) {
         broadcast({ kind: 'log', level: 'error', text: 'snapshot failed: ' + e.message });
         // Persist state even on failure, then continue
@@ -119,21 +129,34 @@ async function startSimpleLoop({ task, context, options, memory, sessionLogger, 
       });
 
       let modelText = '';
+      let modelCallStart = 0;
       try {
+        broadcast({ kind: 'model_call_start', step: runtime.step });
+        modelCallStart = Date.now();
         const out = await callModelWithBackoff(settings, prompt, screenshot, {
           abortCheck: () => runtime.abortFlag,
           onLog: (text) => broadcast({ kind: 'log', text }),
           sessionLogger
         });
         modelText = out.content;
+        const modelDuration = Date.now() - modelCallStart;
+        broadcast({ kind: 'model_call_end', step: runtime.step, duration: modelDuration, tokensUsed: out.tokensUsed || 0 });
         // Accumulate token usage
         if (out.tokensUsed) {
           runtime.totalTokensUsed += out.tokensUsed;
           if (sessionLogger) sessionLogger.logTokens(out.tokensUsed);
           broadcast({ kind: 'tokens_update', tokensUsed: out.tokensUsed, totalTokensUsed: runtime.totalTokensUsed });
         }
+        // Token budget check — hard stop if limit exceeded
+        if (runtime.totalTokensUsed >= tokenLimit) {
+          broadcast({ kind: 'log', level: 'error', text: `🪙 Token limit reached: ${runtime.totalTokensUsed.toLocaleString()} / ${tokenLimit.toLocaleString()}` });
+          runtime.running = false;
+          await setIconMode('error');
+          return { ok: false, reason: 'token_limit_reached', steps: runtime.step };
+        }
         broadcast({ kind: 'log', text: `step ${runtime.step} reply: ${modelText.slice(0, 240)}` });
       } catch (e) {
+        broadcast({ kind: 'model_call_end', step: runtime.step, duration: Date.now() - modelCallStart, error: e.message });
         broadcast({ kind: 'log', level: 'error', text: 'model call failed: ' + e.message });
         if (sessionLogger) sessionLogger.logError(e);
         if (e.message === 'aborted') break;
@@ -149,6 +172,12 @@ async function startSimpleLoop({ task, context, options, memory, sessionLogger, 
         await saveState(runtime, memory);
         await sleep(STEP_DELAY_MS);
         continue;
+      }
+
+      // Extract and broadcast AI's reasoning/thoughts before the action
+      const thought = extractReasoning(modelText);
+      if (thought) {
+        broadcast({ kind: 'agent_thought', step: runtime.step, thought });
       }
 
       broadcast({ kind: 'action', step: runtime.step, action });
@@ -261,7 +290,10 @@ async function startAgent({ task, context, initialUrl, options }) {
   }
 
   // Hide overlays so CDP events pass through to the iframe
-  try { await sendToAgentTab({ kind: 'set_agent_mode', active: true }); } catch (_) {}
+  // (only relevant in iframe mode; direct_tab has no overlays)
+  if (!runtime.isDirectTab) {
+    try { await sendToAgentTab({ kind: 'set_agent_mode', active: true }); } catch (_) {}
+  }
 
   // Initialize session logger
   const sessionLogger = new SessionLogger();
@@ -273,7 +305,7 @@ async function startAgent({ task, context, initialUrl, options }) {
   });
   runtime._sessionLogger = sessionLogger;
 
-  broadcast({ kind: 'started', task, tabId: runtime.agentTabId });
+  broadcast({ kind: 'started', task, tabId: runtime.agentTabId, model: settings.model, provider: settings.provider, tokenLimit: settings.token_limit || 1000000 });
   await setIconMode('working');
 
   // Start heartbeat to keep SW alive during execution
@@ -282,17 +314,54 @@ async function startAgent({ task, context, initialUrl, options }) {
   // Persist initial state so resume can pick up even before first step
   await saveState(runtime, memory);
 
+  let result;
+
+  // ============================================================
+  // VISION-FIRST MODE: single unified screenshot→model→tool loop
+  // ============================================================
+  if (settings.vision_mode) {
+    runtime._loopType = 'vision';
+    broadcast({ kind: 'log', text: '[agent] Vision-First mode: screenshot-only, no DOM snapshots' });
+    memory.setPhase(PHASES.EXECUTING);
+    broadcast({ kind: 'phase_changed', phase: PHASES.EXECUTING });
+    await saveState(runtime, memory);
+
+    result = await runVisionLoop({ task, context, options, memory, sessionLogger });
+
+  } else {
+  // ============================================================
+  // LEGACY DOM-BASED MODE: planning → simple or batch execution
+  // ============================================================
+
   // ---- PHASE 1: PLANNING ----
   memory.setPhase(PHASES.PLANNING);
   broadcast({ kind: 'phase_changed', phase: PHASES.PLANNING });
 
+  // Capture initial screenshot so the planner can see the current page
+  let planningScreenshot = null;
+  try {
+    broadcast({ kind: 'log', text: '📸 Capturing initial page screenshot for planning...' });
+    planningScreenshot = await captureScreenshot();
+    if (planningScreenshot) {
+      broadcast({ kind: 'screenshot_captured', phase: 'planning', hasImage: true });
+      broadcast({ kind: 'log', text: '📸 Initial screenshot captured successfully' });
+    }
+  } catch (e) {
+    broadcast({ kind: 'log', level: 'error', text: '📸 Initial screenshot failed: ' + e.message });
+  }
+
   let plan;
+  let planCallStart = Date.now();
+  broadcast({ kind: 'model_call_start', step: 0, phase: 'planning' });
   try {
     plan = await planTask(settings, task, context, null, () => runtime.abortFlag,
       (text) => broadcast({ kind: 'log', text }),
-      sessionLogger
+      sessionLogger,
+      planningScreenshot
     );
+    broadcast({ kind: 'model_call_end', step: 0, duration: Date.now() - planCallStart, tokensUsed: plan?.tokensUsed || 0 });
   } catch (e) {
+    broadcast({ kind: 'model_call_end', step: 0, duration: Date.now() - planCallStart, error: e.message });
     broadcast({ kind: 'log', level: 'error', text: 'planning failed: ' + e.message });
     plan = { type: 'simple', reason: 'Planning failed: ' + e.message };
   }
@@ -307,8 +376,6 @@ async function startAgent({ task, context, initialUrl, options }) {
   memory.setPlan(plan);
   broadcast({ kind: 'plan_ready', plan });
   await saveState(runtime, memory);
-
-  let result;
 
   if (plan.type === 'batch') {
     runtime._loopType = 'batch';
@@ -346,8 +413,14 @@ ${(await getSnapshot().catch(() => ({ elements: [] }))).elements.slice(0, 80).ma
 CANDIDATES JSON:`;
 
     let screenshot = null;
-    try { screenshot = await captureScreenshot(); } catch (_) {}
+    try {
+      broadcast({ kind: 'infra', text: '📸 Скриншот для извлечения кандидатов...' });
+      screenshot = await captureScreenshot();
+      if (screenshot) broadcast({ kind: 'screenshot_captured', phase: 'extracting', hasImage: true });
+    } catch (_) {}
 
+    let extractCallStart = Date.now();
+    broadcast({ kind: 'model_call_start', step: 0, phase: 'extracting' });
     let extractResult = [];
     try {
       const out = await callModelWithBackoff(settings, extractPrompt, screenshot, {
@@ -355,6 +428,7 @@ CANDIDATES JSON:`;
         onLog: (text) => broadcast({ kind: 'log', text: '[extract] ' + text }),
         sessionLogger
       });
+      broadcast({ kind: 'model_call_end', step: 0, duration: Date.now() - extractCallStart, tokensUsed: out.tokensUsed || 0 });
       // Parse the extraction result
       const parsed = safeParseAction(out.content);
       // Accumulate token usage from extraction call
@@ -373,6 +447,7 @@ CANDIDATES JSON:`;
         } catch (_) {}
       }
     } catch (e) {
+      broadcast({ kind: 'model_call_end', step: 0, duration: Date.now() - extractCallStart, error: e.message });
       broadcast({ kind: 'log', level: 'error', text: 'extraction failed: ' + e.message });
     }
 
@@ -508,6 +583,8 @@ CANDIDATES JSON:`;
     result = await startSimpleLoop({ task, context, options, memory, sessionLogger });
   }
 
+  } // end legacy mode (vision_mode === false)
+
   // Finalize
   memory.setPhase(PHASES.DONE);
   const report = memory.getReport();
@@ -603,7 +680,9 @@ async function attemptResume() {
     kind: 'resumed_after_interrupt',
     step: runtime.step,
     phase: memory.phase,
-    loopType: runtime._loopType
+    loopType: runtime._loopType,
+    model: settings.model,
+    provider: settings.provider
   });
   broadcast({ kind: 'log', text: `⚡ Resumed from step ${runtime.step} (phase: ${memory.phase}, loop: ${runtime._loopType})` });
 
@@ -613,7 +692,11 @@ async function attemptResume() {
   // Resume the appropriate loop
   let result;
   try {
-    if (runtime._loopType === 'batch') {
+    if (runtime._loopType === 'vision') {
+      // Vision-First mode: resume the unified screenshot→model→tool loop
+      broadcast({ kind: 'log', text: '[resume] Resuming Vision-First loop' });
+      result = await resumeVisionLoop({ memory, sessionLogger });
+    } else if (runtime._loopType === 'batch') {
       // For batch mode, resume from the batch execution phase.
       // runBatch reads pending items from memory, so already-processed
       // items (done/failed/skipped) will be skipped automatically.
@@ -645,7 +728,7 @@ async function attemptResume() {
         }
         if (runtime.abortFlag) {
           result = { ok: false, reason: 'stopped_by_user', steps: runtime.step };
-          break; // will finalize below
+          return false; // will finalize below
         }
         broadcast({ kind: 'log', text: '[resume] User confirmed — proceeding with batch execution' });
       }
@@ -729,7 +812,10 @@ async function cleanupAgent() {
   try { await sendToAgentTab({ kind: 'set_agent_mode', active: false }); } catch (_) {}
   try { await cdpDetach(); } catch (_) {}
   removeNetworkIdleTracking();
-  try { await removeDnrSessionRules(); } catch (_) {}
+  // Only remove DNR rules if we were in iframe mode (direct_tab never set them)
+  if (!runtime.isDirectTab) {
+    try { await removeDnrSessionRules(); } catch (_) {}
+  }
   stopHeartbeat();
   await clearState();
   // Keep _sessionLogger alive so user can export reports after session ends.
@@ -745,20 +831,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     try {
       switch (msg.kind) {
         case 'start': {
-          const r = await startAgent({
-            task: msg.task,
-            context: msg.context,
-            initialUrl: msg.initialUrl,
-            options: msg.options || {}
-          });
-          await cleanupAgent();
-          sendResponse(r);
+          // Respond immediately so popup UI isn't blocked for the entire session.
+          // The actual agent loop runs in the background; status/events are
+          // communicated via broadcast().
+          sendResponse({ ok: true, started: true });
+          try {
+            const r = await startAgent({
+              task: msg.task,
+              context: msg.context,
+              initialUrl: msg.initialUrl,
+              options: msg.options || {}
+            });
+            await cleanupAgent();
+          } catch (e) {
+            broadcast({ kind: 'log', level: 'error', text: 'startAgent failed: ' + e.message });
+            broadcast({ kind: 'finished', ok: false, reason: e.message, steps: runtime.step });
+            await cleanupAgent();
+          }
           break;
         }
         case 'stop':
           runtime.abortFlag = true;
           runtime.pauseFlag = false;
           if (runtime._confirmResolve) runtime._confirmResolve();
+          // Immediately detach CDP to prevent reattach cycle and free the tab
+          try { await cdpDetach(); } catch (_) {}
+          removeNetworkIdleTracking();
           await setIconMode('idle');
           stopHeartbeat();
           await clearState();
@@ -812,7 +910,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             phase: runtime._memory?.phase || 'idle',
             taskType: runtime._memory?.taskType || 'simple',
             progress: runtime._memory?.getProgress() || null,
-            resumed: !!runtime._resumed
+            resumed: !!runtime._resumed,
+            totalTokensUsed: runtime.totalTokensUsed
+          });
+          break;
+        case 'get_status_and_logs':
+          sendResponse({
+            status: {
+              running: runtime.running,
+              paused: runtime.pauseFlag,
+              step: runtime.step,
+              task: runtime.task,
+              phase: runtime._memory?.phase || 'idle',
+              taskType: runtime._memory?.taskType || 'simple',
+              totalTokensUsed: runtime.totalTokensUsed
+            },
+            logBuffer: [...(runtime._logBuffer || [])]
           });
           break;
         case 'openLogs': {
@@ -824,6 +937,37 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             await chrome.tabs.create({ url });
           }
           sendResponse({ ok: true });
+          break;
+        }
+        case 'openSidePanel': {
+          // Open the side panel monitoring page.
+          // Called from content scripts (overlay widget) which can't use
+          // chrome.tabs.create or chrome.sidePanel.open directly.
+          try {
+            if (sender.tab?.windowId && chrome.sidePanel?.open) {
+              await chrome.sidePanel.open({ windowId: sender.tab.windowId });
+              sendResponse({ ok: true });
+            } else {
+              // Fallback: open sidepanel.html as a new tab
+              const url = chrome.runtime.getURL('src/sidepanel.html');
+              const existing = await chrome.tabs.query({ url });
+              if (existing && existing[0]) {
+                await chrome.tabs.update(existing[0].id, { active: true });
+              } else {
+                await chrome.tabs.create({ url });
+              }
+              sendResponse({ ok: true });
+            }
+          } catch (e) {
+            // Final fallback: open logs page
+            try {
+              const url = chrome.runtime.getURL('src/sidepanel.html');
+              await chrome.tabs.create({ url });
+              sendResponse({ ok: true });
+            } catch (e2) {
+              sendResponse({ ok: false, error: e2.message });
+            }
+          }
           break;
         }
         case 'openOptions':
@@ -914,15 +1058,40 @@ chrome.debugger.onDetach.addListener((source, reason) => {
     runtime.cdpAttached = false;
     runtime.cdpTarget = null;
     broadcast({ kind: 'log', level: 'error', text: `CDP detached: ${reason}` });
-    if (runtime.running && runtime.agentTabId) {
-      sleep(1000).then(() => {
-        if (runtime.running && runtime.agentTabId) {
-          cdpAttach(runtime.agentTabId).catch(() => {});
-        }
-      });
+
+    // Don't reattach if agent is stopping or already stopped
+    if (!runtime.running || runtime.abortFlag) return;
+
+    // Prevent infinite detach→reattach cycles
+    // Use exponential backoff and limit consecutive retries
+    const detachReason = reason || 'unknown';
+
+    // If detach reason is 'canceled_by_user', it often means DevTools is open
+    // or user interacted with the debugger — aggressive reattach will loop forever
+    if (detachReason === 'canceled_by_user') {
+      // Allow only 1 quick reattach attempt, then give up
+      if (!_cdpReattachCount) _cdpReattachCount = 0;
+      _cdpReattachCount++;
+      if (_cdpReattachCount > 2) {
+        broadcast({ kind: 'log', level: 'error', text: `CDP: too many canceled_by_user detaches (${_cdpReattachCount}), stopping reattach. Close DevTools if open.` });
+        return;
+      }
     }
+
+    const delay = 2000 * Math.min(_cdpReattachCount || 1, 4); // 2s, 4s, 8s, 8s...
+    sleep(delay).then(() => {
+      // Re-check conditions after delay
+      if (runtime.running && !runtime.abortFlag && runtime.agentTabId) {
+        cdpAttach(runtime.agentTabId).then(() => {
+          // Reset counter on successful reattach
+          if (detachReason !== 'canceled_by_user') _cdpReattachCount = 0;
+        }).catch(() => {});
+      }
+    });
   }
 });
+
+let _cdpReattachCount = 0;
 
 // Hotkey
 chrome.commands?.onCommand.addListener((cmd) => {

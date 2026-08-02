@@ -1,299 +1,160 @@
-# 🦞 WebClaw
+# 🦞 WebClaw v5.0 — Vision-First AI Browser Agent
 
-> **An autonomous AI agent that lives in a hidden browser tab and drives any website by sight.**
+**Автономный ИИ-агент нового поколения для Chrome, который видит веб-страницы глазами и управляет браузером как человек.**
 
-[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/placeholder)]()
+[![Manifest V3](https://img.shields.io/badge/Chrome-Manifest_V3-blue.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
+[![Vision First](https://img.shields.io/badge/Architecture-Vision--First-6366f1.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/yourusername/webclaw)]()
 
 ---
 
-[![WebClaw](https://wl.atiks.org/helpers/webclaw/webclaw_logo.jpg)](WebClaw)
+## 1. Что это такое
 
-## 🎬 Demo
+**WebClaw** — это Chrome-расширение, превращающее любую мультимодальную ИИ-модель (Gemini 2.5/3.1, Claude 3.5, GPT-4o, Kimi, Llama 3.2 Vision) в вашего личного браузерного ассистента.
 
-![WebClaw Demo](demo.gif)
+В отличие от классических скриптов автоматизации, WebClaw **не зависит от верстки сайта, HTML-кода и CSS-селекторов**. Он работает по принципу **Computer Use**: «смотрит» на скриншот страницы, принимает решение, думает на человеческом языке и кликает по координатам экрана с помощью реальных системных событий мыши и клавиатуры.
 
-*Watch WebClaw automatically apply to 15 jobs on hh.ru in under 2 minutes*
-
----
-
-## ⚡ Quick Start (30 seconds)
-
-### 1. Install
-```bash
-# Clone the repo
-git clone https://github.com/yourusername/webclaw.git
-
-# Open Chrome → chrome://extensions
-# Enable "Developer mode"
-# Click "Load unpacked" → select the `extension/` folder
-```
-
-### 2. Configure
-Open extension Settings (⚙) and choose your **AI Provider**:
-
-| Provider | Auth | Use case |
-|----------|------|----------|
-| **ProTalk** | Auth Token + Email | Default async router |
-| **OpenAI / OpenRouter** | API Key (`sk-...`) | Direct API, any OpenAI-compatible endpoint |
-| **Anthropic** | API Key | Claude models directly |
-| **Ollama** | None (local) | Offline local models via `localhost:11434` |
-
-Optionally, create a GitHub Gist with non-secret settings:
-```json
-{
-  "user_email": "you@example.com",
-  "model": "openai/gpt-4o",
-  "step_cap": 200
-}
-```
-
-> ⚠️ **Never put `auth_token` or `api_key` in a Gist!** Secrets are stored locally only in `chrome.storage.local` and never synced.
-
-### 3. Use
-1. Click the 🦞 icon in Chrome toolbar
-2. Choose a **Quick Action** or type your task
-3. Click **▶ Start**
-4. Watch the magic happen!
+Вы просто говорите ему обычными словами:
+- *«Найди на hh.ru 10 подходящих вакансий под мое резюме и откликнись на них»*
+- *«Сравни цены на этот товар на трех сайтах, выпиши скидки и добавь дешевле в корзину»*
+- *«Заполни форму регистрации моими данными из контекста»*
 
 ---
 
-## 🆚 Why WebClaw?
+## 2. Ключевые возможности (v5.0)
 
-| Feature | WebClaw | OpenAI Operator | browser-use | Skyvern |
-|---------|---------|-----------------|-------------|---------|
-| **Open Source** | ✅ MIT | ❌ Closed | ✅ Apache | ✅ AGPL |
-| **BYO Model** | ✅ Any | ❌ GPT-4o only | ✅ Any | ⚠️ Limited |
-| **Works Offline** | ✅ Local API | ❌ Cloud-only | ⚠️ Needs LLM API | ❌ Cloud-only |
-| **Price** | 🆓 Free | $200/mo | 🆓 Free | 🆓 Free tier |
-| **Vision + DOM** | ✅ Both | ✅ Vision only | ⚠️ DOM only | ✅ Both |
-| **Multi-tab** | ✅ Parallel | ❌ Single | ❌ Single | ❌ Single |
-| **Session Export** | ✅ Markdown | ❌ No | ❌ No | ❌ No |
-| **Preset Tasks** | ✅ 6 built-in | ❌ Manual | ❌ Manual | ❌ Manual |
+### 👁️ Vision-First Engine (0–1000 Coordinate Grid)
+Полный отказ от сложного парсинга DOM. Модель получает скриншот и отдаёт команды по нормализованной сетке координат от `0` до `1000`. Ломающиеся CSS-селекторы больше не проблема.
+
+### 💭 Прозрачность мышления (Humanized AI Logs)
+Больше никакой технической каши из JSON. В попапе и мониторе четко видны:
+* **Ход мыслей ИИ (`think`)**: *«Вижу кнопку "Откликнуться", нажимаю её...»*
+* **Действия**: Понятный язык с иконками (`🖱️ Клик по экрану (X: 450, Y: 620)`).
+
+### 🧠 Кросс-страничная память (Scratchpad)
+Агент ведет блокнот найденных фактов (цены, имена, контакты), который передается между страницами. Он не заберет и не потеряет данные, даже перейдя на 10 сайтов вперед.
+
+### 🛡️ Самовосстановление (Self-Healing & Stagnation Detection)
+* **Анти-тупик**: Сравнивает хэши скриншотов. Если экран не меняется несколько шагов подряд, агент подсказывает модели изменить подход или делает автоматический разблокирующий скролл.
+* **Анти-трекер**: Если сайт редиректит на рекламный пиксель/трекер (`sm.rtb.mts.ru`), агент видим это глазами и возвращается назад (`back`).
+
+### ⚡ Экономия токенов (`wait_for_completion`)
+Локальный движок наблюдения на базе `MutationObserver`. При появлении спиннеров или загрузок агент **не тратит токены ИИ**, а ждет готовности страницы локально в `content.js`.
+
+### 🖥️ Direct Tab Mode
+Режим прямого управления вашей активной вкладкой без iframe. Полностью обходит любые защиты `X-Frame-Options` и `CSP` (hh.ru, Avito, Amazon и др.).
 
 ---
 
-## 🎯 Use Cases
+## 3. Как это работает
 
-### 💼 Auto-Apply to Jobs
 ```text
-"Apply to all suitable jobs on this page using my resume"
-```
-WebClaw will:
-- Scan job listings
-- Match with your experience
-- Auto-fill applications
-- Skip jobs requiring login
-
-### 📧 Extract Emails
-```text
-"Extract all email addresses from this page"
-```
-
-### 🛒 Add All to Cart
-```text
-"Add all items to cart on this shopping page"
-```
-
-### 📝 Fill Forms
-```text
-"Fill out this registration form with my details"
-```
-
-### 📸 Screenshot & Summarize
-```text
-"Take screenshots of each section and summarize the page"
-```
-
-### 👁️ Monitor Changes
-```text
-"Monitor this page for price changes every 30 seconds"
+               ┌──────────────────────────────────────────┐
+               │    Пользователь вводит задачу в Popup    │
+               └────────────────────┬─────────────────────┘
+                                    │
+                                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                        Единый ReAct-цикл (Vision)                      │
+│                                                                        │
+│  1. Capture Screenshot (CDP Page.captureScreenshot)                    │
+│  2. Visual Stagnation Check (Сравнение хэшей скриншота)               │
+│  3. Build Vision Prompt (Скриншот + Память + Блокнот Scratchpad)       │
+│  4. Call AI Model (Gemini / Claude / OpenAI Router)                    │
+│  5. Parse Response -> Extract Thinking + Tool                          │
+│  6. Scale Normalized Coords (0-1000 -> Viewport Pixels)                │
+│  7. Execute CDP Trusted Event (Mouse Click / Type / Key Press)         │
+│  8. Update History & Local Storage Checkpoint                          │
+└───────────────────────────────────┬────────────────────────────────────┘
+                                    │
+                                    ▼
+               ┌────────────────────┴─────────────────────┐
+               │  Отчёт HTML + Выгрузка API Лога (CURL)   │
+               └──────────────────────────────────────────┘
 ```
 
 ---
 
-## 🏗️ Architecture
+## 4. Набор инструментов ИИ-агента (Vision Toolset)
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Chrome Extension                         │
-├─────────────────────────────────────────────────────────────┤
-│  popup.html     ──→  UI controls, presets, export            │
-│  background.js  ──→  State machine, API calls, badge         │
-│  agent.html     ──→  Hidden tab with iframe                  │
-│  content.js     ──→  DOM interaction (click, type, scroll)   │
-│  settings.js    ──→  Multi-source config (local/gist/sync)   │
-└─────────────────────────────────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   AI Vision Model                            │
-│  • Screenshot → "What do I see?"                            │
-│  • DOM snapshot → "What elements exist?"                    │
-│  • Task + History → "What should I do next?"                │
-│  • Response → JSON action (click/type/scroll/navigate)      │
-└─────────────────────────────────────────────────────────────┘
-```
+Модель управляет браузером через 8 универсальных команд:
 
-**Key Design Decisions:**
-- **Dedicated Agent Tab**: Runs in background, doesn't interrupt your work
-- **Frame-based injection**: content.js runs inside the iframe, not the parent page
-- **Screenshot + DOM**: Model sees both the visual layout and structured element data
-- **Gist-based config**: Settings survive extension reinstalls
+| Команда | Описание |
+| :--- | :--- |
+| **`click_at(x, y, click_count)`** | Доверенный клик мыши по координатам `(0–1000)`. |
+| **`type_at(x, y, text, clear)`** | Клик в поле, очистка (`Ctrl+A` -> `Delete`) и печать текста (поддерживает Юникод/кириллицу/эмодзи). |
+| **`press_key(key)`** | Нажатие клавиш (`Enter`, `Tab`, `Escape`, `Backspace`, `PageDown`). |
+| **`scroll(direction, amount, x, y)`** | Прокрутка страницы колесом мыши (`up`, `down`, `top`, `bottom`). |
+| **`hover_at(x, y)`** | Наведение курсора мыши для выпадающих меню. |
+| **`select_at(x, y, value)`** | Выбор пункта из выпадающего списка `<select>`. |
+| **`navigate(url)` / `back`** | Прямой переход на сайт или шаг назад по истории. |
+| **`wait(seconds)`** | Пауза при загрузке динамического контента. |
+| **`done(answer)` / `fail(reason)`** | Финализация задачи или сообщение о блокировке (Captcha/2FA). |
 
 ---
 
-## ⚙️ Settings
+## 5. Быстрый старт
 
-### Remote Config (Recommended)
+### 1. Установка в Chrome
+1. Клонируйте репозиторий или скачайте ZIP.
+2. Откройте Chrome и перейдите по адресу `chrome://extensions/`.
+3. Включите **«Режим разработчика»** (Developer mode) в правом верхнем углу.
+4. Нажмите **«Загрузить распакованное расширение»** (Load unpacked) и выберите папку `extension`.
 
-Create a GitHub Gist with your settings:
+### 2. Настройка подключения
+1. Нажмите на иконку расширения $\rightarrow$ **⚙ Настройки**.
+2. Выберите провайдера (ProTalk Async Router, OpenAI / OpenRouter, Anthropic Claude, Ollama).
+3. Укажите ваш **Auth Token** / **API Key** и выберите модель (рекомендуется `google/gemini-3.1-flash-lite-preview` или `anthropic/claude-3.5-sonnet`).
+4. Включите галочку **`Vision-First Mode`** и **`Direct Tab Mode`**.
+5. Заполните поле **«Контекст пользователя»** (ваше резюме, имя, контакты).
 
-```json
-{
-  "user_email": "you@example.com",
-  "model": "xiaomi/mimo-v2.5",
-  "temperature": 0.2,
-  "reasoning": "low",
-  "step_cap": 200,
-  "user_context": "My name is John, I'm a senior developer with 10 years of experience..."
-}
-```
-
-**Why Gist?**
-- ✅ Survives extension reinstalls
-- ✅ Sync across devices
-- ✅ Version history
-- ✅ Works offline (cached locally)
-
-### Supported Models
-
-| Model | Speed | Quality | Cost |
-|-------|-------|---------|------|
-| `xiaomi/mimo-v2.5` | ⚡ Fast | ⭐⭐⭐ | Free |
-| `openai/gpt-4o` | 🐢 Slow | ⭐⭐⭐⭐⭐ | $$ |
-| `anthropic/claude-3.5-sonnet` | 🐢 Slow | ⭐⭐⭐⭐ | $$ |
-| `google/gemini-2.0-flash` | ⚡ Fast | ⭐⭐⭐⭐ | $ |
+### 3. Запуск задачи
+1. Перейдите на целевой сайт (например, `hh.ru`).
+2. Откройте попап WebClaw, введите задачу или выберите один из **6 готовых быстрых шаблонов**.
+3. Нажмите **▶ Старт**.
+4. Нажмите **📊 Монитор**, чтобы открыть боковую панель и наблюдать за рассуждениями и действиями агента в реальном времени.
 
 ---
 
-## 🔒 Privacy
+## 6. Техническая архитектура (для разработчиков)
 
-- **Your data stays local**: All processing happens in your browser
-- **No telemetry**: We don't track you
-- **Screenshots are ephemeral**: Sent to AI model, then deleted
-- **Open source**: Audit the code yourself
-
----
-
-## 🛠️ Development
-
-### Project Structure
+### Структура проекта
 ```
-webclaw/
-├── extension/
-│   ├── manifest.json          # Chrome extension manifest
-│   ├── icons/                 # Extension icons
-│   └── src/
-│       ├── popup.html/js      # Popup UI
-│       ├── background.js      # Service worker (state machine)
-│       ├── agent.html/js      # Hidden tab with iframe
-│       ├── content.js         # DOM interaction scripts
-│       ├── settings.js        # Multi-source settings
-│       ├── remote_config.js   # Gist/URL config fetcher
-│       └── logs.html/js       # Full-screen log viewer
-├── README.md
-├── LICENSE
-├── CONTRIBUTING.md
-└── docs/
-    ├── architecture.md
-    └── templates.md
+extension/
+├── manifest.json            # Manifest V3 (permissions: debugger, storage, sidePanel...)
+└── src/
+    ├── background.js        # Orchestrator & MV3 Service Worker survival
+    ├── vision_loop.js       # Единый ReAct Vision-First цикл
+    ├── vision_tools.js      # Преобразование 0–1000 координат в CDP события
+    ├── vision_prompt.js     # Промпт-инжиниринг зрения + детекция зависаний
+    ├── cdp.js               # CDP слой (Page.captureScreenshot, Input.dispatchMouseEvent)
+    ├── settings.js          # Локальное хранилище настроек + импорт секретов
+    ├── session_logger.js    # Логирование сессий и генерация HTML/CURL отчетов
+    ├── format_helper.js     # Форматирование JSON действий в человекочитаемый вид
+    ├── popup.html/js        # Главный попап с карточкой мыслей ИИ
+    └── sidepanel.html/js    # Боковая панель Мониторинга с интерактивной лентой
 ```
 
-### Build & Test
-```bash
-# No build step needed! Just load unpacked in Chrome.
-
-# To test:
-1. Make changes
-2. Go to chrome://extensions
-3. Click "Reload" on WebClaw
-4. Test in browser
-```
-
-### Adding New Actions
-
-1. **Define action in prompt** (`background.js` → `buildAgentPrompt`)
-2. **Handle in content.js** (add `case` in message listener)
-3. **Execute in background.js** (`performAction` function)
+### Живучесть Service Worker (Manifest V3)
+Service Worker в MV3 выгружается каждые ~30 секунд простоя. WebClaw обеспечивает **100% сохранение состояния**:
+- После каждого шага полные данные сессии сохраняются в `chrome.storage.session`.
+- Фоновый `chrome.alarms` каждые ~25 секунд поддерживает воркер «живым».
+- При перезапуске воркера функция `attemptResume()` бесшовно восстанавливает сессию с последнего шага без потери прогресса.
 
 ---
 
-## 📝 Templates
+## 7. Отчёты и экспорт
 
-### Template Format
+По завершении работы расширение позволяет выгрузить два типа отчётов:
 
-```yaml
-name: "Auto-apply to hh.ru"
-description: "Automatically apply to all suitable jobs"
-task: "Apply to all jobs that match my experience"
-context: |
-  I'm a senior developer with 10 years experience in:
-  - Python, JavaScript, TypeScript
-  - React, Node.js, Django
-  - AWS, Docker, Kubernetes
-  
-  Desired salary: 300k RUB/month
-  Location: Moscow or remote
-steps:
-  - action: scroll
-    direction: down
-  - action: wait
-    selector: ".vacancy-card"
-  - action: click
-    selector: ".vacancy-card:first-child"
-```
+1. **HTML-отчёт (Визуальный):**
+   Красивый интерактивный таймлайн всех шагов с кликабельными скриншотами, раскрывающимися блоками мыслей ИИ, метаданными и статистикой потраченных токенов. Скриншоты автоматически загружаются на сервер `file.pro-talk.ru` для сохранения постоянных ссылок.
 
-### Community Templates
-
-Browse templates at [github.com/yourusername/webclaw/templates](templates/)
+2. **API-лог (для отладки):**
+   Чистый текстовый файл с готовыми `CURL`-командами для каждого запроса к ИИ, включая все заголовки, тела запросов и сырые ответы сервера.
 
 ---
 
-## 🤝 Contributing
+## 📄 Лицензия
 
-We love contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-### Ways to Contribute
-- 🐛 **Report bugs**: Open an issue
-- 💡 **Suggest features**: Start a discussion
-- 📝 **Add templates**: Submit a PR
-- 🌍 **Translate**: Help with i18n
-- ⭐ **Star the repo**: Show your support!
-
----
-
-## 📄 License
-
-MIT License — see [LICENSE](LICENSE)
-
----
-
-## 🙏 Acknowledgments
-
-- [ProTalk](https://pro-talk.ru) for the async AI API
-- [Chrome Extensions](https://developer.chrome.com/docs/extensions/) documentation
-- The open-source community for inspiration
-
----
-
-## 📬 Contact
-
-- **Issues**: [GitHub Issues](https://github.com/yourusername/webclaw/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/webclaw/discussions)
-- **Twitter**: [@yourusername](https://twitter.com/yourusername)
-
----
-
-**Made with 🦞 by the WebClaw team**
+Проект распространяется под лицензией [MIT](LICENSE).

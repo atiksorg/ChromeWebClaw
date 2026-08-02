@@ -60,7 +60,7 @@ clearBtn.addEventListener('click', () => {
 });
 
 chrome.runtime.onMessage.addListener((msg) => {
-  if (!msg || msg.kind !== 'agent_event') return;
+  if (!msg || !msg._agentEvent) return;
   switch (msg.kind) {
     case 'log':
       addLine(msg.text, msg.level === 'error' ? 'err' : '');
@@ -70,6 +70,22 @@ chrome.runtime.onMessage.addListener((msg) => {
       break;
     case 'observation':
       addLine(`#${msg.step} → ${JSON.stringify(msg.observation).slice(0, 300)}`);
+      break;
+    case 'agent_thought':
+      addLine(`💭 #${msg.step} думает: ${msg.thought}`, 'act');
+      break;
+    case 'model_call_start':
+      addLine(`⏳ #${msg.step} модель думает...`);
+      break;
+    case 'model_call_end':
+      if (msg.error) {
+        addLine(`❌ #${msg.step} ошибка модели: ${msg.error}`, 'err');
+      } else {
+        addLine(`✓ #${msg.step} ответ за ${(msg.duration / 1000).toFixed(1)}с${msg.tokensUsed ? ' · 🪙' + msg.tokensUsed : ''}`);
+      }
+      break;
+    case 'api_call':
+      addLine(`📡 API ${msg.method || 'POST'} ${(msg.url || '').slice(0, 60)} → HTTP ${msg.responseStatus || '?'}${msg.error ? ' ERR: ' + msg.error : ''} (${msg.durationMs}ms)`, msg.error ? 'err' : '');
       break;
     case 'step_start':
       status.textContent = `шаг ${msg.step}`;

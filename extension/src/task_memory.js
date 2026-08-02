@@ -43,6 +43,9 @@ export class TaskMemory {
     this.errors = [];                // [{ itemId, error, phase }]
     this.startedAt = 0;
     this.completedAt = 0;
+    this.searchPageUrl = '';          // URL of the search/listing page (for self-healing navigation)
+    this.searchPageTitle = '';        // Title of the search/listing page
+    this.scratchpad = [];             // Scratchpad notes: persistent facts saved across pages
   }
 
   // ---- Phase management ----
@@ -65,6 +68,26 @@ export class TaskMemory {
 
   setUserContext(ctx) {
     this.userContext = ctx || '';
+  }
+
+  // ---- Scratchpad management ----
+
+  addNote(note) {
+    if (!note) return;
+    const noteStr = typeof note === 'string' ? note : JSON.stringify(note);
+    if (!this.scratchpad.includes(noteStr)) {
+      this.scratchpad.push(noteStr);
+    }
+  }
+
+  addNotes(notesList) {
+    if (!Array.isArray(notesList)) return;
+    notesList.forEach(note => this.addNote(note));
+  }
+
+  getScratchpadText() {
+    if (this.scratchpad.length === 0) return '';
+    return 'AGENT\'S SCRATCHPAD (saved facts from previous pages):\n' + this.scratchpad.map(n => `- ${n}`).join('\n');
   }
 
   // ---- Item management ----
@@ -151,6 +174,12 @@ export class TaskMemory {
 
     if (this.userContext) {
       parts.push(`USER CONTEXT:\n"""\n${this.userContext}\n"""`);
+    }
+
+    // Add scratchpad notes if any
+    const scratchpadText = this.getScratchpadText();
+    if (scratchpadText) {
+      parts.push(scratchpadText);
     }
 
     if (this.items.length > 0) {

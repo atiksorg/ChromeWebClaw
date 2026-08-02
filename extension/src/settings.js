@@ -39,6 +39,17 @@ const KEY_WAIT_STALL_THRESHOLD = 'wait_progress_stall_threshold';
 const KEY_ACTION_DELAY = 'action_delay_ms';
 const KEY_MAX_ACTIONS = 'max_actions_per_session';
 const KEY_AUTONOMY = 'autonomy_mode';            // 'full' = no confirmation, 'safe' = require human approval
+// v5.0 Direct Tab mode
+const KEY_DIRECT_TAB = 'use_direct_tab';
+// v6.0 Micro-loop & self-healing
+const KEY_BATCH_STEPS = 'batch_steps_per_item';      // Max model calls per batch item
+const KEY_AD_BLOCKLIST = 'ad_domain_blocklist';       // Ad/tracker domains to skip
+// v5.1 ProTalk file server
+const KEY_UPLOAD_TOKEN = 'protalk_upload_token';
+// v7.0 Vision-First mode
+const KEY_VISION_MODE = 'vision_mode';
+// v8.0 Token budget
+const KEY_TOKEN_LIMIT = 'token_limit';
 
 const DEFAULTS = {
   auth_token: '',
@@ -52,8 +63,8 @@ const DEFAULTS = {
   step_cap: 200,
   user_context: '',
   // v3.0 defaults
-  cdp_input_mode: true,          // Use CDP for trusted input events
-  iframe_bypass_enabled: true,   // declarativeNetRequest headers bypass
+  cdp_input_mode: false,         // Use CDP for trusted input events (off by default)
+  iframe_bypass_enabled: false,  // declarativeNetRequest headers bypass (off by default)
   spa_network_idle_ms: 500,      // Network idle threshold (ms)
   spa_dom_stable_ms: 300,        // DOM stability threshold (ms)
   agent_viewport_width: 1280,    // Predictable viewport width for AI
@@ -65,7 +76,18 @@ const DEFAULTS = {
   // v4.0 batch mode
   action_delay_ms: 2000,          // Delay between batch actions (ms)
   max_actions_per_session: 50,    // Max actions per batch session
-  autonomy_mode: 'full'           // 'full' = autonomous (no confirm), 'safe' = require human approval
+  autonomy_mode: 'full',          // 'full' = autonomous (no confirm), 'safe' = require human approval
+  // v5.0 Direct Tab mode
+  use_direct_tab: true,           // true = work in user's active tab (no agent.html/iframe), false = agent.html with iframe
+  // v6.0 Micro-loop & self-healing
+  batch_steps_per_item: 5,        // Max model calls per batch item (micro-loop)
+  ad_domain_blocklist: 'rtb.mts.ru,sm.rtb.mts.ru,doubleclick.net,googlesyndication.com,googleadservices.com,facebook.com/tr,analytics.google.com',  // Ad/tracker domains to skip in frame discovery
+  // v5.1 ProTalk file server
+  protalk_upload_token: '',       // Custom upload token for ProTalk file server (optional)
+  // v7.0 Vision-First mode
+  vision_mode: true,              // true = Vision-First (screenshot-only, no DOM), false = DOM-based (legacy)
+  // v8.0 Token budget
+  token_limit: 1000000            // Max total tokens per session — hard stop when exceeded
 };
 
 function readSync() {
@@ -96,7 +118,18 @@ function readSync() {
         // v4.0 batch mode
         action_delay_ms: typeof items[KEY_ACTION_DELAY] === 'number' ? items[KEY_ACTION_DELAY] : DEFAULTS.action_delay_ms,
         max_actions_per_session: typeof items[KEY_MAX_ACTIONS] === 'number' ? items[KEY_MAX_ACTIONS] : DEFAULTS.max_actions_per_session,
-        autonomy_mode: items[KEY_AUTONOMY] || DEFAULTS.autonomy_mode
+        autonomy_mode: items[KEY_AUTONOMY] || DEFAULTS.autonomy_mode,
+        // v5.0 Direct Tab mode
+        use_direct_tab: items[KEY_DIRECT_TAB] !== undefined ? !!items[KEY_DIRECT_TAB] : DEFAULTS.use_direct_tab,
+        // v6.0 Micro-loop & self-healing
+        batch_steps_per_item: typeof items[KEY_BATCH_STEPS] === 'number' ? items[KEY_BATCH_STEPS] : DEFAULTS.batch_steps_per_item,
+        ad_domain_blocklist: items[KEY_AD_BLOCKLIST] || DEFAULTS.ad_domain_blocklist,
+        // v5.1 ProTalk file server
+        protalk_upload_token: items[KEY_UPLOAD_TOKEN] || '',
+        // v7.0 Vision-First mode
+        vision_mode: items[KEY_VISION_MODE] !== undefined ? !!items[KEY_VISION_MODE] : DEFAULTS.vision_mode,
+        // v8.0 Token budget
+        token_limit: typeof items[KEY_TOKEN_LIMIT] === 'number' ? items[KEY_TOKEN_LIMIT] : DEFAULTS.token_limit
       });
     });
   });
@@ -165,6 +198,7 @@ export function setSettings(partial) {
     // Secrets go to chrome.storage.local (device-local, never synced)
     if (partial.auth_token !== undefined) localPatch[KEY_TOKEN] = partial.auth_token;
     if (partial.api_key !== undefined) localPatch[KEY_API_KEY] = partial.api_key;
+    if (partial.protalk_upload_token !== undefined) localPatch[KEY_UPLOAD_TOKEN] = partial.protalk_upload_token;
 
     // Everything else goes to chrome.storage.sync
     if (partial.user_email !== undefined) syncPatch[KEY_EMAIL] = partial.user_email;
@@ -192,6 +226,19 @@ export function setSettings(partial) {
     if (partial.action_delay_ms !== undefined) syncPatch[KEY_ACTION_DELAY] = Math.max(500, Math.min(30000, partial.action_delay_ms));
     if (partial.max_actions_per_session !== undefined) syncPatch[KEY_MAX_ACTIONS] = Math.max(1, Math.min(500, partial.max_actions_per_session));
     if (partial.autonomy_mode !== undefined) syncPatch[KEY_AUTONOMY] = partial.autonomy_mode === 'safe' ? 'safe' : 'full';
+
+    // v5.0 Direct Tab mode
+    if (partial.use_direct_tab !== undefined) syncPatch[KEY_DIRECT_TAB] = !!partial.use_direct_tab;
+
+    // v6.0 Micro-loop & self-healing
+    if (partial.batch_steps_per_item !== undefined) syncPatch[KEY_BATCH_STEPS] = Math.max(1, Math.min(20, partial.batch_steps_per_item));
+    if (partial.ad_domain_blocklist !== undefined) syncPatch[KEY_AD_BLOCKLIST] = String(partial.ad_domain_blocklist || '');
+
+    // v7.0 Vision-First mode
+    if (partial.vision_mode !== undefined) syncPatch[KEY_VISION_MODE] = !!partial.vision_mode;
+
+    // v8.0 Token budget
+    if (partial.token_limit !== undefined) syncPatch[KEY_TOKEN_LIMIT] = Math.max(1000, Math.min(50000000, partial.token_limit));
 
     // Write both stores in parallel
     let done = 0;

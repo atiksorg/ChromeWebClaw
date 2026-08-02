@@ -13,7 +13,33 @@
 // each provider logs the API call details (CURL format, request/response bodies,
 // status codes, duration) for debugging and HTML report generation.
 
+import { broadcast } from './bus.js';
+import { uploadScreenshot, isDataUrl } from './file_upload.js';
+
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+/**
+ * Abortable sleep: resolves early if abortCheck() returns true.
+ * @param {number} ms - Duration in ms
+ * @param {Function} [abortCheck] - () => boolean, throws if true
+ */
+async function abortableSleep(ms, abortCheck) {
+  const checkInterval = 300; // check every 300ms
+  const start = Date.now();
+  while (Date.now() - start < ms) {
+    if (abortCheck && abortCheck()) throw new Error('aborted');
+    await sleep(Math.min(checkInterval, ms - (Date.now() - start)));
+  }
+}
+
+/**
+ * Log API call to session logger AND broadcast to real-time UI.
+ * This ensures API calls appear in logs/monitor instantly.
+ */
+function logApiCallAndBroadcast(sessionLogger, data) {
+  if (sessionLogger) sessionLogger.logApiCall(data);
+  broadcast({ kind: 'api_call', ...data });
+}
 
 // ============================================================
 // HELPER: build multimodal content array from prompt + image
@@ -25,15 +51,23 @@ function buildMessages(userText, imageDataUrl) {
   return [{ role: 'user', content: userText }];
 }
 
-function buildMultimodalMessages(userText, imageDataUrl) {
-  if (!imageDataUrl) return [{ role: 'user', content: userText }];
-  return [{
-    role: 'user',
-    content: [
-      { type: 'text', text: userText },
-      { type: 'image_url', image_url: { url: imageDataUrl } }
-    ]
-  }];
+function buildMultimodalMessages(userText, imageDataUrl, systemPrompt) {
+  const messages = [];
+  if (systemPrompt) {
+    messages.push({ role: 'system', content: systemPrompt });
+  }
+  if (!imageDataUrl) {
+    messages.push({ role: 'user', content: userText });
+  } else {
+    messages.push({
+      role: 'user',
+      content: [
+        { type: 'text', text: userText },
+        { type: 'image_url', image_url: { url: imageDataUrl } }
+      ]
+    });
+  }
+  return messages;
 }
 
 // ============================================================
@@ -46,17 +80,30 @@ class ProTalkProvider {
     this.baseUrl = 'https://ai.pro-talk.ru/api/async/router';
   }
 
-  async callModel(settings, userText, imageDataUrl, onTaskCreated, sessionLogger) {
+  async callModel(settings, userText, imageDataUrl, onTaskCreated, sessionLogger, abortCheck, systemPrompt) {
     const content = [{ type: 'text', text: userText }];
     if (imageDataUrl) {
-      content.push({ type: 'image_url', image_url: { url: imageDataUrl } });
+      // Upload screenshot to file server and get public URL
+      let imageUrl = imageDataUrl;
+      try {
+        if (isDataUrl(imageDataUrl)) {
+          imageUrl = await uploadScreenshot(imageDataUrl);
+        }
+      } catch (e) {
+        // Fall back to original data URL if upload fails
+        console.warn('Screenshot upload failed, using data URL:', e.message);
+      }
+      content.push({ type: 'image_url', image_url: { url: imageUrl } });
     }
     const payload = {
       base_url: 'https://openrouter.ai/api/v1/chat/completions',
       platform: 'ProTalk',
       user_email: settings.user_email,
       model: settings.model,
-      messages: [{ role: 'user', content }],
+      messages: [
+        ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+        { role: 'user', content }
+      ],
       temperature: typeof settings.temperature === 'number' ? settings.temperature : 0.2,
       reasoning: { effort: settings.reasoning || 'low' },
       stream: false
@@ -84,13 +131,11 @@ class ProTalkProvider {
       responseBody = txt;
       errorStr = `HTTP ${r.status}: ${txt.slice(0, 200)}`;
       // Log failed API call
-      if (sessionLogger) {
-        sessionLogger.logApiCall({
-          provider: this.name, url: this.baseUrl, method: 'POST', headers,
-          body: payload, response: responseBody, responseStatus,
-          error: errorStr, durationMs: Date.now() - startTime
-        });
-      }
+      logApiCallAndBroadcast(sessionLogger, {
+        provider: this.name, url: this.baseUrl, method: 'POST', headers,
+        body: payload, response: responseBody, responseStatus,
+        error: errorStr, durationMs: Date.now() - startTime
+      });
       if (r.status === 429 || r.status >= 500) {
         const err = new Error('create_task_http_' + r.status);
         err.transient = true;
@@ -102,51 +147,48 @@ class ProTalkProvider {
     responseBody = j;
 
     // Log the create-task call
-    if (sessionLogger) {
-      sessionLogger.logApiCall({
-        provider: this.name, url: this.baseUrl, method: 'POST', headers,
-        body: payload, response: j, responseStatus,
-        durationMs: Date.now() - startTime
-      });
-    }
+    logApiCallAndBroadcast(sessionLogger, {
+      provider: this.name, url: this.baseUrl, method: 'POST', headers,
+      body: payload, response: j, responseStatus,
+      durationMs: Date.now() - startTime
+    });
 
     if (!j.task_id) throw new Error('create_task_no_task_id: ' + JSON.stringify(j).slice(0, 200));
 
     if (onTaskCreated) onTaskCreated(j.task_id);
 
     // Poll for result
-    return await this._poll(authToken, j.task_id, sessionLogger);
+    return await this._poll(authToken, j.task_id, sessionLogger, abortCheck);
   }
 
-  async _poll(authToken, taskId, sessionLogger) {
+  async _poll(authToken, taskId, sessionLogger, abortCheck) {
     const url = `${this.baseUrl}/${taskId}`;
     const headers = { 'Authorization': 'Bearer ' + authToken };
     const deadline = Date.now() + 5 * 60 * 1000;
     while (Date.now() < deadline) {
+      // Abort check at the top of every polling iteration
+      if (abortCheck && abortCheck()) throw new Error('aborted');
       const startTime = Date.now();
       const r = await fetch(url, { headers });
       if (!r.ok) {
         if (r.status === 429 || r.status >= 500) {
-          if (sessionLogger) {
-            sessionLogger.logApiCall({
-              provider: this.name, url, method: 'GET', headers,
-              responseStatus: r.status, error: `HTTP ${r.status}`,
-              durationMs: Date.now() - startTime
-            });
-          }
-          await sleep(2000);
+          logApiCallAndBroadcast(sessionLogger, {
+            provider: this.name, url, method: 'GET', headers,
+            responseStatus: r.status, error: `HTTP ${r.status}`,
+            durationMs: Date.now() - startTime
+          });
+          // Abortable wait between retries
+          await abortableSleep(2000, abortCheck);
           continue;
         }
         throw new Error('poll_http_' + r.status);
       }
       const j = await r.json();
-      if (sessionLogger) {
-        sessionLogger.logApiCall({
-          provider: this.name, url, method: 'GET', headers,
-          response: j, responseStatus: r.status,
-          durationMs: Date.now() - startTime
-        });
-      }
+      logApiCallAndBroadcast(sessionLogger, {
+        provider: this.name, url, method: 'GET', headers,
+        response: j, responseStatus: r.status,
+        durationMs: Date.now() - startTime
+      });
       if (j.status === 'completed') {
         const msg = j.result?.choices?.[0]?.message;
         const tokensUsed = j.result?.usage?.total_tokens || 0;
@@ -155,7 +197,8 @@ class ProTalkProvider {
       if (j.status === 'failed') {
         throw new Error('task_failed: ' + JSON.stringify(j).slice(0, 300));
       }
-      await sleep(1500);
+      // Abortable wait between polls
+      await abortableSleep(1500, abortCheck);
     }
     throw new Error('poll_timeout');
   }
@@ -170,10 +213,21 @@ class OpenAIProvider {
     this.name = 'OpenAI';
   }
 
-  async callModel(settings, userText, imageDataUrl, onTaskCreated, sessionLogger) {
+  async callModel(settings, userText, imageDataUrl, onTaskCreated, sessionLogger, abortCheck, systemPrompt) {
     const baseUrl = (settings.api_base_url || 'https://api.openai.com/v1').replace(/\/+$/, '');
     const apiKey = settings.api_key || settings.auth_token;
-    const messages = buildMultimodalMessages(userText, imageDataUrl);
+    
+    // Upload screenshot if it's a data URL
+    let processedImageUrl = imageDataUrl;
+    if (imageDataUrl && isDataUrl(imageDataUrl)) {
+      try {
+        processedImageUrl = await uploadScreenshot(imageDataUrl);
+      } catch (e) {
+        console.warn('Screenshot upload failed, using data URL:', e.message);
+      }
+    }
+    
+    const messages = buildMultimodalMessages(userText, processedImageUrl, systemPrompt);
 
     const body = {
       model: settings.model,
@@ -202,14 +256,12 @@ class OpenAIProvider {
 
     if (!r.ok) {
       const txt = await r.text().catch(() => '');
-      if (sessionLogger) {
-        sessionLogger.logApiCall({
-          provider: this.name, url, method: 'POST', headers,
-          body, response: txt, responseStatus: r.status,
-          error: `HTTP ${r.status}: ${txt.slice(0, 200)}`,
-          durationMs: Date.now() - startTime
-        });
-      }
+      logApiCallAndBroadcast(sessionLogger, {
+        provider: this.name, url, method: 'POST', headers,
+        body, response: txt, responseStatus: r.status,
+        error: `HTTP ${r.status}: ${txt.slice(0, 200)}`,
+        durationMs: Date.now() - startTime
+      });
       if (r.status === 429 || r.status >= 500) {
         const err = new Error('openai_http_' + r.status);
         err.transient = true;
@@ -223,13 +275,11 @@ class OpenAIProvider {
     const tokensUsed = j.usage?.total_tokens || 0;
     const result = { content: msg?.content || '', reasoning: msg?.reasoning || '', tokensUsed };
 
-    if (sessionLogger) {
-      sessionLogger.logApiCall({
-        provider: this.name, url, method: 'POST', headers,
-        body, response: j, responseStatus: r.status,
-        durationMs: Date.now() - startTime
-      });
-    }
+    logApiCallAndBroadcast(sessionLogger, {
+      provider: this.name, url, method: 'POST', headers,
+      body, response: j, responseStatus: r.status,
+      durationMs: Date.now() - startTime
+    });
 
     return result;
   }
@@ -245,21 +295,28 @@ class AnthropicProvider {
     this.baseUrl = 'https://api.anthropic.com';
   }
 
-  async callModel(settings, userText, imageDataUrl, onTaskCreated, sessionLogger) {
+  async callModel(settings, userText, imageDataUrl, onTaskCreated, sessionLogger, abortCheck, systemPrompt) {
     const apiKey = settings.api_key || settings.auth_token;
     const model = settings.model.replace('anthropic/', ''); // strip provider prefix if present
 
     // Anthropic uses a different message format
     const content = [{ type: 'text', text: userText }];
     if (imageDataUrl) {
-      // Extract base64 data and media type from data URL
-      const match = imageDataUrl.match(/^data:(image\/\w+);base64,(.+)$/);
-      if (match) {
-        content.unshift({
-          type: 'image',
-          source: { type: 'base64', media_type: match[1], data: match[2] }
-        });
+      // Upload screenshot to file server and get public URL
+      let imageUrl = imageDataUrl;
+      try {
+        if (isDataUrl(imageDataUrl)) {
+          imageUrl = await uploadScreenshot(imageDataUrl);
+        }
+      } catch (e) {
+        console.warn('Screenshot upload failed, using data URL:', e.message);
       }
+      
+      // Anthropic supports URL type for images
+      content.unshift({
+        type: 'image',
+        source: { type: 'url', url: imageUrl }
+      });
     }
 
     const body = {
@@ -268,6 +325,11 @@ class AnthropicProvider {
       messages: [{ role: 'user', content }],
       temperature: typeof settings.temperature === 'number' ? settings.temperature : 0.2
     };
+
+    // Anthropic uses a top-level 'system' field (not a system message in the array)
+    if (systemPrompt) {
+      body.system = systemPrompt;
+    }
 
     const url = `${this.baseUrl}/v1/messages`;
     const headers = {
@@ -285,14 +347,12 @@ class AnthropicProvider {
 
     if (!r.ok) {
       const txt = await r.text().catch(() => '');
-      if (sessionLogger) {
-        sessionLogger.logApiCall({
-          provider: this.name, url, method: 'POST', headers,
-          body, response: txt, responseStatus: r.status,
-          error: `HTTP ${r.status}: ${txt.slice(0, 200)}`,
-          durationMs: Date.now() - startTime
-        });
-      }
+      logApiCallAndBroadcast(sessionLogger, {
+        provider: this.name, url, method: 'POST', headers,
+        body, response: txt, responseStatus: r.status,
+        error: `HTTP ${r.status}: ${txt.slice(0, 200)}`,
+        durationMs: Date.now() - startTime
+      });
       if (r.status === 429 || r.status >= 500) {
         const err = new Error('anthropic_http_' + r.status);
         err.transient = true;
@@ -308,13 +368,11 @@ class AnthropicProvider {
     const tokensUsed = (j.usage?.input_tokens || 0) + (j.usage?.output_tokens || 0);
     const result = { content: textBlock?.text || '', reasoning: '', tokensUsed };
 
-    if (sessionLogger) {
-      sessionLogger.logApiCall({
-        provider: this.name, url, method: 'POST', headers,
-        body, response: j, responseStatus: r.status,
-        durationMs: Date.now() - startTime
-      });
-    }
+    logApiCallAndBroadcast(sessionLogger, {
+      provider: this.name, url, method: 'POST', headers,
+      body, response: j, responseStatus: r.status,
+      durationMs: Date.now() - startTime
+    });
 
     return result;
   }
@@ -330,11 +388,15 @@ class OllamaProvider {
     this.defaultBaseUrl = 'http://localhost:11434';
   }
 
-  async callModel(settings, userText, imageDataUrl, onTaskCreated, sessionLogger) {
+  async callModel(settings, userText, imageDataUrl, onTaskCreated, sessionLogger, abortCheck, systemPrompt) {
     const baseUrl = (settings.api_base_url || this.defaultBaseUrl).replace(/\/+$/, '');
     const model = settings.model.replace(/^ollama\//i, ''); // strip prefix
 
     // Ollama /api/chat format
+    const messages = [];
+    if (systemPrompt) {
+      messages.push({ role: 'system', content: systemPrompt });
+    }
     const message = { role: 'user', content: userText };
     if (imageDataUrl) {
       // Ollama accepts base64 images in the images array
@@ -343,10 +405,11 @@ class OllamaProvider {
         message.images = [match[1]];
       }
     }
+    messages.push(message);
 
     const body = {
       model,
-      messages: [message],
+      messages,
       stream: false,
       options: {
         temperature: typeof settings.temperature === 'number' ? settings.temperature : 0.2
@@ -365,14 +428,12 @@ class OllamaProvider {
 
     if (!r.ok) {
       const txt = await r.text().catch(() => '');
-      if (sessionLogger) {
-        sessionLogger.logApiCall({
-          provider: this.name, url, method: 'POST', headers,
-          body, response: txt, responseStatus: r.status,
-          error: `HTTP ${r.status}: ${txt.slice(0, 200)}`,
-          durationMs: Date.now() - startTime
-        });
-      }
+      logApiCallAndBroadcast(sessionLogger, {
+        provider: this.name, url, method: 'POST', headers,
+        body, response: txt, responseStatus: r.status,
+        error: `HTTP ${r.status}: ${txt.slice(0, 200)}`,
+        durationMs: Date.now() - startTime
+      });
       if (r.status === 429 || r.status >= 500) {
         const err = new Error('ollama_http_' + r.status);
         err.transient = true;
@@ -386,13 +447,11 @@ class OllamaProvider {
     const tokensUsed = (j.prompt_eval_count || 0) + (j.eval_count || 0);
     const result = { content: j.message?.content || '', reasoning: '', tokensUsed };
 
-    if (sessionLogger) {
-      sessionLogger.logApiCall({
-        provider: this.name, url, method: 'POST', headers,
-        body, response: j, responseStatus: r.status,
-        durationMs: Date.now() - startTime
-      });
-    }
+    logApiCallAndBroadcast(sessionLogger, {
+      provider: this.name, url, method: 'POST', headers,
+      body, response: j, responseStatus: r.status,
+      durationMs: Date.now() - startTime
+    });
 
     return result;
   }
@@ -435,8 +494,15 @@ export function getProvider(settings) {
 /**
  * Call model with retry/backoff logic (provider-agnostic).
  * This replaces the old callModelWithBackoff() in background.js.
+ *
+ * @param {Object} settings
+ * @param {string} userText
+ * @param {string|null} imageDataUrl
+ * @param {Object} opts - { onTaskCreated, onLog, abortCheck, sessionLogger }
+ *   abortCheck: () => boolean — checked before each API call, between retries,
+ *               and inside polling loops (ProTalk) so that "Stop" interrupts immediately.
  */
-export async function callModelWithBackoff(settings, userText, imageDataUrl, { onTaskCreated, onLog, abortCheck, sessionLogger } = {}) {
+export async function callModelWithBackoff(settings, userText, imageDataUrl, { onTaskCreated, onLog, abortCheck, sessionLogger, systemPrompt } = {}) {
   const provider = getProvider(settings);
   let attempt = 0;
   let lastErr;
@@ -444,17 +510,19 @@ export async function callModelWithBackoff(settings, userText, imageDataUrl, { o
   while (attempt < 4) {
     if (abortCheck && abortCheck()) throw new Error('aborted');
     try {
-      const result = await provider.callModel(settings, userText, imageDataUrl, onTaskCreated, sessionLogger);
+      const result = await provider.callModel(settings, userText, imageDataUrl, onTaskCreated, sessionLogger, abortCheck, systemPrompt);
       return result;
     } catch (e) {
       lastErr = e;
+      if (e.message === 'aborted') throw e; // Never retry on abort
       if (!e.transient && !/poll_timeout|create_task_no_task_id/.test(e.message)) {
         throw e;
       }
       attempt++;
       const wait = Math.min(15000, 1500 * Math.pow(2, attempt));
       if (onLog) onLog(`retry in ${wait}ms: ${e.message}`);
-      await sleep(wait);
+      // Abortable sleep between retries
+      await abortableSleep(wait, abortCheck);
     }
   }
   throw lastErr || new Error('unknown_api_error');

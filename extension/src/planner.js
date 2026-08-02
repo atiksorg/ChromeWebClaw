@@ -65,9 +65,10 @@ function looksLikeBatchTask(taskText) {
  * @param {Object|null} currentPageInfo - Current page info { url, title } (optional)
  * @param {Function} abortCheck - () => boolean, returns true if agent should stop
  * @param {Function} onLog - (text) => void, for broadcasting log messages
+ * @param {string|null} screenshot - data:image/png;base64,... URL of the current page (optional but recommended)
  * @returns {Promise<Object>} plan - { type: 'simple' } or { type: 'batch', ... }
  */
-export async function planTask(settings, task, userContext, currentPageInfo, abortCheck, onLog, sessionLogger) {
+export async function planTask(settings, task, userContext, currentPageInfo, abortCheck, onLog, sessionLogger, screenshot) {
   // Fast path: if heuristic says "simple", skip the model call entirely
   if (!looksLikeBatchTask(task)) {
     if (onLog) onLog('[planner] heuristic: simple task (no batch keywords)');
@@ -76,11 +77,11 @@ export async function planTask(settings, task, userContext, currentPageInfo, abo
 
   if (onLog) onLog('[planner] heuristic: batch keywords detected, calling model for analysis...');
 
-  // Build the planning prompt (text-only, no screenshot)
+  // Build the planning prompt (text-only analysis, but screenshot helps understand page context)
   const prompt = buildPlannerPrompt({ task, userContext, currentPageInfo });
 
   try {
-    const out = await callModelWithBackoff(settings, prompt, null, {
+    const out = await callModelWithBackoff(settings, prompt, screenshot || null, {
       abortCheck,
       onLog: (text) => { if (onLog) onLog('[planner] ' + text); },
       sessionLogger

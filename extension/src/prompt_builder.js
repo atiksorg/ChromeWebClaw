@@ -62,11 +62,20 @@ RULES:
    - {"action":"wait_url","contains":"<substring>","timeoutMs":8000,"reason":"<short>"}
    - {"action":"wait_for_completion","condition":{...},"timeoutMs":60000,"reason":"<short>"}
    - {"action":"extract","selector":"<css>","as":"text|html","reason":"<short>"}
+   - {"action":"click_coords","x":500,"y":320,"reason":"<short>"}  (click at pixel coordinates — use when no CSS selector available)
+   - {"action":"hover","selector":"<css>","reason":"<short>"}  (hover to reveal dropdowns/tooltips)
+   - {"action":"select_option","selector":"<css>","value":"<option value>","reason":"<short>"}  (select dropdown option)
+   - {"action":"upload_file","selector":"<css>","dataUrl":"data:...","fileName":"file.pdf","reason":"<short>"}  (upload file to input)
+   - {"action":"request_screenshot","reason":"<why you need a fresh screenshot>"}
    - {"action":"done","answer":"<final result for user>"}
    - {"action":"fail","reason":"<why you can't continue>"}
 3. ALWAYS use selectors from the INTERACTIVE ELEMENTS list. If a needed element isn't there, scroll or wait first.
 4. If a captcha/login/2FA blocks you, emit {"action":"fail","reason":"<what's blocking>"}.
 5. Be efficient. If the task is already satisfied by current state, emit done.
+6. CSS SELECTORS — use ONLY standard CSS selectors. NEVER use Playwright-style pseudo-classes like :has-text(), :text(), :visible, :nth(). Use the EXACT "sel=" values from INTERACTIVE ELEMENTS. For text matching, use selectors like [aria-label="..."], [placeholder="..."], or find the element by its visible text in the list and use its sel= value.
+7. You can request a fresh screenshot at any time if you need to see what changed on the page after an action: {"action":"request_screenshot","reason":"..."}
+8. For SELECT dropdowns: use select_option action, not click. For file uploads: use upload_file with a dataUrl.
+9. If you see a button on the screenshot but it's not in the DOM list (Canvas, SVG, cross-origin iframe), use click_coords with the pixel position from the screenshot.
 
 Next action JSON:`;
 }
@@ -122,10 +131,15 @@ ${taskMemoryContext ? `TASK MEMORY:\n${taskMemoryContext}\n\n` : ''}
 ${userContext ? `USER CONTEXT:\n"""\n${userContext}\n"""\n\n` : ''}
 RULES:
 1. Output ONE JSON object, nothing else.
-2. Actions: click, type, pressKey, scroll, navigate, wait, wait_url, wait_for_completion, extract, done, fail.
-3. Use ONLY selectors from the INTERACTIVE ELEMENTS list.
-4. If you cannot find the right element or the item is not applicable, emit {"action":"skip","reason":"<why>"}.
-5. When the action for this item is complete, emit {"action":"done","result":"<what happened>"}.
+2. Actions: click, type, pressKey, scroll, navigate, back, wait, wait_url, wait_for_completion, extract, click_coords, hover, select_option, upload_file, request_screenshot, done, fail, skip.
+3. Use ONLY selectors from the INTERACTIVE ELEMENTS list. Copy the EXACT "sel=" value.
+4. CSS SELECTORS — use ONLY standard CSS. NEVER use Playwright pseudo-classes: :has-text(), :text(), :visible, :nth(). Use the exact sel= values shown above.
+5. If you cannot find the right element or the item is not applicable, emit {"action":"skip","reason":"<why>"}.
+6. When the action for this item is complete, emit {"action":"done","result":"<what happened>"}.
+7. You can request a fresh screenshot: {"action":"request_screenshot","reason":"..."}
+8. For SELECT dropdowns: use select_option, not click. For file uploads: use upload_file with a dataUrl.
+9. If you see a button on the screenshot but it's not in the DOM list (Canvas, SVG), use click_coords with pixel position.
+10. SELF-HEALING: If the page looks wrong (empty, redirected to an ad/tracker, or shows unexpected content), emit {"action":"navigate","url":"<back to search page>"} to recover. Do NOT emit fail for transient issues — try to recover first.
 
 Next action JSON:`;
 }
@@ -200,6 +214,36 @@ JSON:`;
 // ============================================================
 
 /**
+ * Extract the AI's "thinking" / reasoning text from before the JSON action.
+ * Many models output natural language reasoning before emitting the JSON object.
+ * This function separates them so we can show the user "what the AI is thinking".
+ *
+ * @param {string} text — raw model response
+ * @returns {string} the reasoning portion (may be empty)
+ */
+export function extractReasoning(text) {
+  if (!text) return '';
+  let s = text.trim();
+  // Strip markdown fences, keeping content
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) s = fence[1].trim();
+
+  // Find the first JSON object
+  const firstBrace = s.indexOf('{');
+  if (firstBrace <= 0) return ''; // no text before the JSON
+
+  const before = s.slice(0, firstBrace).trim();
+  // Filter out common non-reasoning prefixes
+  const cleaned = before
+    .replace(/^(here'?s?\s+|next\s+action\s*:?\s*|output\s*:?\s*|response\s*:?\s*)/i, '')
+    .replace(/^(```json?\s*)?/i, '')
+    .trim();
+
+  // Limit length for UI display
+  return cleaned.length > 500 ? cleaned.slice(0, 500) + '…' : cleaned;
+}
+
+/**
  * Parse a model's text response into a structured action object.
  * Handles markdown fences, trailing prose, etc.
  */
@@ -239,4 +283,59 @@ export function safeParsePlan(text) {
     if (!obj.type) return null;
     return obj;
   } catch (e) { return null; }
+}
+
+// ============================================================
+// CSS SELECTOR SANITIZATION
+// ============================================================
+
+// Playwright-only pseudo-classes that are NOT valid CSS
+const INVALID_PSEUDO_CLASSES = [
+  /:has-text\([^)]*\)/gi,
+  /:text\([^)]*\)/gi,
+  /:text-is\([^)]*\)/gi,
+  /:text-matches\([^)]*\)/gi,
+  /:visible/gi,
+  /:has\([^)]*\)/gi,
+  /:has-not\([^)]*\)/gi,
+  /:above\([^)]*\)/gi,
+  /:below\([^)]*\)/gi,
+  /:left-of\([^)]*\)/gi,
+  /:right-of\([^)]*\)/gi,
+  /:near\([^)]*\)/gi,
+];
+
+/**
+ * Sanitize a CSS selector by stripping Playwright-only pseudo-classes
+ * that cause querySelector() to throw. Returns the cleaned selector
+ * and a boolean indicating whether sanitization was applied.
+ *
+ * @param {string} selector
+ * @returns {{ selector: string, sanitized: boolean, original: string }}
+ */
+export function sanitizeCssSelector(selector) {
+  if (!selector || typeof selector !== 'string') return { selector: selector || '', sanitized: false, original: selector || '' };
+  const original = selector;
+  let cleaned = selector;
+  let wasSanitized = false;
+
+  for (const regex of INVALID_PSEUDO_CLASSES) {
+    // Reset lastIndex for global regexes
+    regex.lastIndex = 0;
+    if (regex.test(cleaned)) {
+      regex.lastIndex = 0;
+      cleaned = cleaned.replace(regex, '');
+      wasSanitized = true;
+    }
+  }
+
+  // Clean up trailing/leading whitespace and double spaces
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+
+  // If cleaning removed everything, return the original so the caller can decide
+  if (!cleaned) {
+    return { selector: original, sanitized: false, original };
+  }
+
+  return { selector: cleaned, sanitized: wasSanitized, original };
 }
