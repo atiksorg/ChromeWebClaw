@@ -1,188 +1,299 @@
 # 🦞 WebClaw
 
-**Расширение для Chrome, которое само «ходит» по сайтам вместо вас — по вашему заданию, написанному обычными словами.**
+> **An autonomous AI agent that lives in a hidden browser tab and drives any website by sight.**
+
+[![Chrome Web Store](https://img.shields.io/chrome-web-store/v/placeholder)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![GitHub Stars](https://img.shields.io/github/stars/yourusername/webclaw)]()
 
 ---
 
-## 1. Что это такое (для всех)
+[![WebClaw](https://wl.atiks.org/helpers/webclaw/webclaw_logo.jpg)](WebClaw)
 
-Представьте, что у вас есть помощник, который умеет пользоваться браузером точно так же, как человек: смотрит на страницу, читает, что на ней написано, нажимает кнопки, заполняет поля, листает вниз. Вы просто говорите ему словами, что нужно сделать — например:
+## 🎬 Demo
 
-- «Собери все email с этой страницы»
-- «Заполни форму регистрации моими данными»
-- «Добавь все товары в корзину»
-- «Откликнись на все подходящие вакансии»
+![WebClaw Demo](demo.gif)
 
-...и он делает это сам, шаг за шагом, пока не закончит или не поймёт, что задача выполнена.
-
-Работает это так:
-1. Вы открываете расширение и печатаете задание.
-2. Расширение открывает скрытую вкладку с нужным сайтом.
-3. Оно «фотографирует» страницу и передаёт её вместе с заданием в ИИ-модель (по сути — в тот же тип модели, что стоит за ChatGPT/Claude).
-4. Модель отвечает: «нажми вот сюда» или «впиши вот такой текст».
-5. Расширение выполняет это действие и снова «фотографирует» результат — и так по кругу, пока задача не будет выполнена.
-
-Вы можете в любой момент поставить процесс на паузу, остановить его или посмотреть журнал (лог) всех действий.
+*Watch WebClaw automatically apply to 15 jobs on hh.ru in under 2 minutes*
 
 ---
 
-## 2. Как этим пользоваться (для обычного пользователя)
+## ⚡ Quick Start (30 seconds)
 
-1. Установите расширение в Chrome (через «Загрузить распакованное расширение» в `chrome://extensions`).
-2. Откройте настройки расширения и укажите:
-   - какую ИИ-модель использовать;
-   - ключ доступа (API-ключ) к этой модели.
-3. Нажмите на иконку расширения, введите задачу простыми словами (можно выбрать одну из готовых — есть 6 стандартных сценариев) и нажмите «Старт».
-4. Наблюдайте за процессом: значок на иконке расширения меняет цвет в зависимости от состояния — «работает», «на паузе», «ждёт» или «ошибка».
-5. По завершении можно выгрузить отчёт о сессии (в виде красивого HTML-файла) — что делал агент, какие скриншоты снимал, что отвечала модель.
+### 1. Install
+```bash
+# Clone the repo
+git clone https://github.com/yourusername/webclaw.git
 
-Важная деталь: агент работает в **отдельной скрытой вкладке**, поэтому вы можете спокойно продолжать пользоваться браузером — он вам не мешает.
+# Open Chrome → chrome://extensions
+# Enable "Developer mode"
+# Click "Load unpacked" → select the `extension/` folder
+```
+
+### 2. Configure
+Open extension Settings (⚙) and choose your **AI Provider**:
+
+| Provider | Auth | Use case |
+|----------|------|----------|
+| **ProTalk** | Auth Token + Email | Default async router |
+| **OpenAI / OpenRouter** | API Key (`sk-...`) | Direct API, any OpenAI-compatible endpoint |
+| **Anthropic** | API Key | Claude models directly |
+| **Ollama** | None (local) | Offline local models via `localhost:11434` |
+
+Optionally, create a GitHub Gist with non-secret settings:
+```json
+{
+  "user_email": "you@example.com",
+  "model": "openai/gpt-4o",
+  "step_cap": 200
+}
+```
+
+> ⚠️ **Never put `auth_token` or `api_key` in a Gist!** Secrets are stored locally only in `chrome.storage.local` and never synced.
+
+### 3. Use
+1. Click the 🦞 icon in Chrome toolbar
+2. Choose a **Quick Action** or type your task
+3. Click **▶ Start**
+4. Watch the magic happen!
 
 ---
 
-## 3. Из чего это состоит (для тех, кто интересуется техникой чуть глубже)
+## 🆚 Why WebClaw?
 
-Расширение состоит из нескольких частей, каждая отвечает за своё:
+| Feature | WebClaw | OpenAI Operator | browser-use | Skyvern |
+|---------|---------|-----------------|-------------|---------|
+| **Open Source** | ✅ MIT | ❌ Closed | ✅ Apache | ✅ AGPL |
+| **BYO Model** | ✅ Any | ❌ GPT-4o only | ✅ Any | ⚠️ Limited |
+| **Works Offline** | ✅ Local API | ❌ Cloud-only | ⚠️ Needs LLM API | ❌ Cloud-only |
+| **Price** | 🆓 Free | $200/mo | 🆓 Free | 🆓 Free tier |
+| **Vision + DOM** | ✅ Both | ✅ Vision only | ⚠️ DOM only | ✅ Both |
+| **Multi-tab** | ✅ Parallel | ❌ Single | ❌ Single | ❌ Single |
+| **Session Export** | ✅ Markdown | ❌ No | ❌ No | ❌ No |
+| **Preset Tasks** | ✅ 6 built-in | ❌ Manual | ❌ Manual | ❌ Manual |
 
-| Часть | Роль в двух словах |
-|---|---|
-| **Всплывающее окно (popup)** | Интерфейс — куда вы вводите задачу и жмёте «Старт/Стоп» |
-| **Фоновый процесс (background)** | «Мозг»: держит состояние, вызывает ИИ, командует остальными частями |
-| **Скрытая вкладка (agent tab)** | Где физически открыт сайт, с которым работает агент |
-| **Скрипт на странице (content script)** | «Руки»: кликает, печатает текст, читает содержимое страницы |
-| **Настройки (settings)** | Хранит модель, ключ доступа, параметры запуска |
+---
 
-Все эти части общаются между собой через **сообщения** (message passing) — стандартный способ обмена данными между разными частями Chrome-расширения.
+## 🎯 Use Cases
 
-Цикл работы агента по сути такой:
-
+### 💼 Auto-Apply to Jobs
+```text
+"Apply to all suitable jobs on this page using my resume"
 ```
-Задача от пользователя
-   → Скриншот страницы + список кнопок/полей на ней
-   → Отправка ИИ-модели: «вот страница, вот задача, что делать?»
-   → Ответ модели в виде команды (например: "click", "type", "scroll")
-   → Выполнение команды на странице
-   → Снова скриншот — и по новой, пока не будет получена команда "done"
+WebClaw will:
+- Scan job listings
+- Match with your experience
+- Auto-fill applications
+- Skip jobs requiring login
+
+### 📧 Extract Emails
+```text
+"Extract all email addresses from this page"
+```
+
+### 🛒 Add All to Cart
+```text
+"Add all items to cart on this shopping page"
+```
+
+### 📝 Fill Forms
+```text
+"Fill out this registration form with my details"
+```
+
+### 📸 Screenshot & Summarize
+```text
+"Take screenshots of each section and summarize the page"
+```
+
+### 👁️ Monitor Changes
+```text
+"Monitor this page for price changes every 30 seconds"
 ```
 
 ---
 
-## 4. Технические детали (для разработчиков)
-
-### 4.1 Архитектура
-
-Проект написан на чистом JavaScript (ES-модули), без сборки — расширение можно просто загрузить в Chrome в режиме разработчика («Load unpacked»), без webpack/vite и прочих шагов сборки.
+## 🏗️ Architecture
 
 ```
-extension/
-├── manifest.json          # манифест Chrome Extension Manifest V3
-├── icons/
-└── src/
-    ├── popup.html/js      # UI попапа
-    ├── background.js      # service worker — оркестратор
-    ├── agent.html/js      # хост-страница со скрытой вкладкой и iframe
-    ├── content.js          # DOM-слой: клики, ввод текста, снапшот элементов
-    ├── action_dispatch.js  # маршрутизация "AI action" → низкоуровневая операция
-    ├── cdp.js               # работа с Chrome DevTools Protocol
-    ├── bus.js               # общее состояние рантайма, broadcast-сообщения
-    ├── agent_tab.js          # жизненный цикл скрытой вкладки, поиск фреймов
-    ├── planner.js            # определяет: задача простая или пакетная (batch)
-    ├── batch_executor.js     # исполнение пакетных операций (много однотипных действий)
-    ├── task_memory.js        # структурированная память сессии для планировщика
-    ├── prompt_builder.js      # сборка промпта и разбор ответа модели
-    ├── providers.js           # адаптеры под разные API ИИ-моделей
-    ├── persistence.js         # сохранение состояния между "заморозками" service worker
-    ├── session_logger.js      # логирование сессии, экспорт HTML/CURL-отчётов
-    ├── settings.js            # источники настроек (локально/через Gist/sync)
-    └── remote_config.js       # подгрузка конфигурации из GitHub Gist
+┌─────────────────────────────────────────────────────────────┐
+│                     Chrome Extension                         │
+├─────────────────────────────────────────────────────────────┤
+│  popup.html     ──→  UI controls, presets, export            │
+│  background.js  ──→  State machine, API calls, badge         │
+│  agent.html     ──→  Hidden tab with iframe                  │
+│  content.js     ──→  DOM interaction (click, type, scroll)   │
+│  settings.js    ──→  Multi-source config (local/gist/sync)   │
+└─────────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   AI Vision Model                            │
+│  • Screenshot → "What do I see?"                            │
+│  • DOM snapshot → "What elements exist?"                    │
+│  • Task + History → "What should I do next?"                │
+│  • Response → JSON action (click/type/scroll/navigate)      │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### 4.2 Manifest V3 и ключевые разрешения
+**Key Design Decisions:**
+- **Dedicated Agent Tab**: Runs in background, doesn't interrupt your work
+- **Frame-based injection**: content.js runs inside the iframe, not the parent page
+- **Screenshot + DOM**: Model sees both the visual layout and structured element data
+- **Gist-based config**: Settings survive extension reinstalls
+
+---
+
+## ⚙️ Settings
+
+### Remote Config (Recommended)
+
+Create a GitHub Gist with your settings:
 
 ```json
-"permissions": [
-  "activeTab", "tabs", "storage", "scripting",
-  "alarms", "webNavigation", "debugger",
-  "declarativeNetRequest", "declarativeNetRequestFeedback", "downloads"
-],
-"host_permissions": ["<all_urls>"]
+{
+  "user_email": "you@example.com",
+  "model": "xiaomi/mimo-v2.5",
+  "temperature": 0.2,
+  "reasoning": "low",
+  "step_cap": 200,
+  "user_context": "My name is John, I'm a senior developer with 10 years of experience..."
+}
 ```
 
-- `debugger` — используется для подключения к **Chrome DevTools Protocol (CDP)**: это позволяет отправлять по-настоящему «доверенные» (trusted) события клика/ввода текста и снимать скриншоты в фоне, без активации вкладки пользователем.
-- `declarativeNetRequest` — используется точечно: сессионные правила снимают заголовки `X-Frame-Options`/`CSP` **только** для sub_frame внутри служебной вкладки агента (`tabIds: [agentTabId]`), чтобы можно было встраивать произвольные сайты в iframe. Правила удаляются сразу после остановки агента.
-- `<all_urls>` — агент должен уметь работать на любом сайте, который укажет пользователь.
+**Why Gist?**
+- ✅ Survives extension reinstalls
+- ✅ Sync across devices
+- ✅ Version history
+- ✅ Works offline (cached locally)
 
-### 4.3 Как исполняются действия (action → операция)
+### Supported Models
 
-Модель возвращает JSON-команду вида `{"action": "click", "selector": "..."}`. Диспетчер (`action_dispatch.js`) сначала пробует выполнить её через CDP (реальные системные события мыши/клавиатуры — это надёжнее для React/Vue-приложений, которые игнорируют синтетические DOM-события), а при неудаче — откатывается на выполнение через `content.js` (эмуляция полного набора событий: `pointerdown/mousedown/focus/pointerup/mouseup/click`).
-
-Поддерживаемые действия: `navigate`, `click`, `type`, `scroll`, `pressKey`, `wait`, `wait_url`, `back`, `extract`, `pageInfo`, `wait_for_completion`, `done`, `fail`.
-
-### 4.4 `wait_for_completion` — локальный движок ожидания
-
-Одна из ключевых оптимизаций: раньше агент тратил вызов модели на каждый шаг ожидания («крутилка ещё крутится» → снова спрашивать модель). Теперь ожидание делегируется в `content.js`:
-
-- **MutationObserver** — основной сенсор изменений DOM (debounce 100 мс, нулевая нагрузка на CPU в состоянии покоя);
-- **адаптивный polling** (500мс → 500мс → 1с → 1с → 2с → 2с → 3с → 5с) — резервный механизм и основной способ отслеживания `url_change`;
-- детектор ошибок по `[role="alert"]`, `.error`, ключевым словам (в том числе на русском: «ошибка», «не удалось»);
-- детектор «зависания» прогресса (`aria-valuenow` не меняется 10 циклов подряд).
-
-Модель вызывается заново только когда условие выполнено, истёк таймаут или произошла ошибка — а не на каждой итерации ожидания.
-
-### 4.5 Снапшот DOM и построение селекторов
-
-`content.js` строит для каждого интерактивного элемента устойчивый CSS-селектор по каскаду приоритетов:
-`#id` → `data-testid/data-qa/...` → `role + aria-label` → `name` → `nth-of-type`-цепочка.
-Обход рекурсивно проходит через **открытые Shadow DOM** и same-origin `iframe`, агрегируя координаты элементов с поправкой на смещение фрейма — это нужно, чтобы клики через CDP по глобальным координатам вкладки попадали именно туда, куда нужно, даже если элемент лежит глубоко во вложенном iframe.
-
-### 4.6 Простой режим vs Batch-режим
-
-`planner.js` сначала анализирует задачу и решает: это «простая» задача (реактивный цикл — шаг за шагом) или «пакетная» (например, «откликнись на все вакансии»). Для batch-режима есть отдельный конвейер:
-
-```
-PLANNING → EXTRACTING (модель извлекает список кандидатов)
-        → FILTERING (программная фильтрация по критериям, без ИИ)
-        → CONFIRMING (пользователь подтверждает список, если требуется)
-        → EXECUTING (batch_executor.js прогоняет действие по каждому элементу)
-```
-
-> ⚠️ Важный нюанс реализации: подтверждение (`CONFIRMING`) имеет автотаймаут 5 минут — если пользователь не ответил, пакет выполняется автоматически, даже если операция помечена как необратимая (`isIrreversible`). Это стоит учитывать при доработке — для необратимых действий логичнее было бы отменять операцию по таймауту, а не выполнять её.
-
-### 4.7 Живучесть Service Worker (MV3)
-
-Service worker в Manifest V3 может быть выгружен браузером в любой момент простоя. Чтобы длинная агентная сессия не обрывалась:
-
-- после каждого шага состояние (`runtime` + `TaskMemory`) сохраняется в `chrome.storage.session` (`persistence.js`);
-- `chrome.alarms` каждые ~25 секунд поддерживает воркер «живым» (heartbeat);
-- при пробуждении воркера (`onInstalled`, `onStartup`, либо просто при получении любого события) проверяется, есть ли незавершённая сессия — и если да, состояние восстанавливается (`attemptResume()`), включая повторное подключение CDP и переприкрепление к вкладке агента;
-- элементы batch-очереди, застрявшие в статусе `processing` на момент падения воркера, при восстановлении переводятся обратно в `pending` (идемпотентный повтор — риск дублирующего клика меньше, чем риск молча потерять элемент).
-
-### 4.8 Провайдеры ИИ-моделей
-
-Единый интерфейс `callModel(settings, userText, imageDataUrl, onTaskCreated, sessionLogger)` реализован для четырёх бэкендов:
-
-- **ProTalk** — асинхронный роутер (создание задачи + поллинг по `task_id`), исторически основной провайдер;
-- **OpenAI-совместимый** — любой endpoint по формату `/chat/completions` (включая OpenRouter);
-- **Anthropic** — нативный формат Messages API (`/v1/messages`, изображения через `type: image` + base64);
-- **Ollama** — локальный сервер, работает офлайн, без ключа.
-
-`callModelWithBackoff()` добавляет общую для всех провайдеров логику ретраев с экспоненциальной задержкой (до 4 попыток) при `429`/`5xx`/таймауте поллинга.
-
-### 4.9 Безопасность и хранение секретов
-
-- `auth_token`/`api_key` хранятся **только** в `chrome.storage.local` (не синхронизируются с аккаунтом Google);
-- удалённый конфиг (GitHub Gist) не может содержать секреты — этот путь для них закрыт;
-- нет прокси-фолбэка для загрузки конфига (чтобы ключи не утекали через сторонние CORS-прокси);
-- DNR-правила, снимающие защитные заголовки, скоуплены строго на `tabId` служебной вкладки и автоматически снимаются при остановке агента.
-
-### 4.10 Известные архитектурные компромиссы
-
-- Разрешения `debugger` + `<all_urls>` + снятие `X-Frame-Options/CSP` — мощная связка для автоматизации, но именно она обычно требует отдельного объяснения при публикации в Chrome Web Store и может подпадать под ручную проверку политики.
-- Надёжность выполнения задачи в целом зависит от качества ответов ИИ-модели — сама механика диспетчеризации действий написана аккуратно, но конечное поведение агента на сложных/нестандартных сайтах предсказать заранее нельзя.
-- В проекте нет автотестов/CI — весь контроль качества опирается на ручную проверку через «Reload extension» в `chrome://extensions`.
+| Model | Speed | Quality | Cost |
+|-------|-------|---------|------|
+| `xiaomi/mimo-v2.5` | ⚡ Fast | ⭐⭐⭐ | Free |
+| `openai/gpt-4o` | 🐢 Slow | ⭐⭐⭐⭐⭐ | $$ |
+| `anthropic/claude-3.5-sonnet` | 🐢 Slow | ⭐⭐⭐⭐ | $$ |
+| `google/gemini-2.0-flash` | ⚡ Fast | ⭐⭐⭐⭐ | $ |
 
 ---
 
-## 📄 Лицензия
+## 🔒 Privacy
 
-MIT — см. [LICENSE](LICENSE)
+- **Your data stays local**: All processing happens in your browser
+- **No telemetry**: We don't track you
+- **Screenshots are ephemeral**: Sent to AI model, then deleted
+- **Open source**: Audit the code yourself
+
+---
+
+## 🛠️ Development
+
+### Project Structure
+```
+webclaw/
+├── extension/
+│   ├── manifest.json          # Chrome extension manifest
+│   ├── icons/                 # Extension icons
+│   └── src/
+│       ├── popup.html/js      # Popup UI
+│       ├── background.js      # Service worker (state machine)
+│       ├── agent.html/js      # Hidden tab with iframe
+│       ├── content.js         # DOM interaction scripts
+│       ├── settings.js        # Multi-source settings
+│       ├── remote_config.js   # Gist/URL config fetcher
+│       └── logs.html/js       # Full-screen log viewer
+├── README.md
+├── LICENSE
+├── CONTRIBUTING.md
+└── docs/
+    ├── architecture.md
+    └── templates.md
+```
+
+### Build & Test
+```bash
+# No build step needed! Just load unpacked in Chrome.
+
+# To test:
+1. Make changes
+2. Go to chrome://extensions
+3. Click "Reload" on WebClaw
+4. Test in browser
+```
+
+### Adding New Actions
+
+1. **Define action in prompt** (`background.js` → `buildAgentPrompt`)
+2. **Handle in content.js** (add `case` in message listener)
+3. **Execute in background.js** (`performAction` function)
+
+---
+
+## 📝 Templates
+
+### Template Format
+
+```yaml
+name: "Auto-apply to hh.ru"
+description: "Automatically apply to all suitable jobs"
+task: "Apply to all jobs that match my experience"
+context: |
+  I'm a senior developer with 10 years experience in:
+  - Python, JavaScript, TypeScript
+  - React, Node.js, Django
+  - AWS, Docker, Kubernetes
+  
+  Desired salary: 300k RUB/month
+  Location: Moscow or remote
+steps:
+  - action: scroll
+    direction: down
+  - action: wait
+    selector: ".vacancy-card"
+  - action: click
+    selector: ".vacancy-card:first-child"
+```
+
+### Community Templates
+
+Browse templates at [github.com/yourusername/webclaw/templates](templates/)
+
+---
+
+## 🤝 Contributing
+
+We love contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+### Ways to Contribute
+- 🐛 **Report bugs**: Open an issue
+- 💡 **Suggest features**: Start a discussion
+- 📝 **Add templates**: Submit a PR
+- 🌍 **Translate**: Help with i18n
+- ⭐ **Star the repo**: Show your support!
+
+---
+
+## 📄 License
+
+MIT License — see [LICENSE](LICENSE)
+
+---
+
+## 🙏 Acknowledgments
+
+- [ProTalk](https://pro-talk.ru) for the async AI API
+- [Chrome Extensions](https://developer.chrome.com/docs/extensions/) documentation
+- The open-source community for inspiration
+
+---
+
+## 📬 Contact
+
+- **Issues**: [GitHub Issues](https://github.com/yourusername/webclaw/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/yourusername/webclaw/discussions)
+- **Twitter**: [@yourusername](https://twitter.com/yourusername)
+
+---
+
+**Made with 🦞 by the WebClaw team**

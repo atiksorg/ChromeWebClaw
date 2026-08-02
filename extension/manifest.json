@@ -1,0 +1,55 @@
+{
+  "manifest_version": 3,
+  "name": "WebClaw",
+  "version": "4.1.0",
+  "description": "An autonomous AI agent that lives in a hidden browser tab and drives any website by sight. Uses Chrome DevTools Protocol for trusted events and background screenshots. Supports planning, batch operations, and structured task memory.",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "storage",
+    "scripting",
+    "alarms",
+    "webNavigation",
+    "debugger",
+    "declarativeNetRequest",
+    "declarativeNetRequestFeedback",
+    "downloads"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "WebClaw — AI Browser Agent",
+    "default_popup": "src/popup.html",
+    "default_icon": {
+      "16": "icons/icon_16.png",
+      "48": "icons/icon_48.png",
+      "128": "icons/icon_128.png"
+    }
+  },
+  "options_ui": {
+    "page": "src/options.html",
+    "open_in_tab": true
+  },
+  "commands": {
+    "toggle": {
+      "suggested_key": { "default": "Alt+Shift+A" },
+      "description": "Start or stop the agent"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["src/agent.html", "src/logs.html"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "icons": {
+    "16": "icons/icon_16.png",
+    "48": "icons/icon_48.png",
+    "128": "icons/icon_128.png"
+  }
+}

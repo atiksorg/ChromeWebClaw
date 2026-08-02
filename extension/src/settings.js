@@ -1,0 +1,226 @@
+// settings.js — multi-source settings store.
+//
+// Resolution order (later overrides earlier):
+//   1. Defaults
+//   2. chrome.storage.sync        — primary, non-secret settings
+//   3. chrome.storage.local       — SECRETS ONLY (auth_token, api_key) — never synced to Google Account
+//   4. chrome.storage.local.cache — mirror of the last good remote fetch
+//   5. remote config URL          — a JSON file at a user-provided URL
+//
+// Security: auth_token and api_key are stored ONLY in chrome.storage.local
+// (device-local, never synced, never backed up to Google Account).
+// Remote config (Gist) is NOT allowed to import secrets.
+
+import { fetchRemoteConfig } from './remote_config.js';
+
+const KEY_TOKEN = 'auth_token';
+const KEY_EMAIL = 'user_email';
+const KEY_MODEL = 'model';
+const KEY_PROVIDER = 'provider';
+const KEY_API_BASE = 'api_base_url';
+const KEY_API_KEY = 'api_key';
+const KEY_TEMP  = 'temperature';
+const KEY_REAS  = 'reasoning';
+const KEY_STEPCAP = 'step_cap';
+const KEY_USERCTX = 'user_context';
+const KEY_REMOTECFG = 'remote_config_url';
+// New v3.0 keys
+const KEY_CDP_INPUT = 'cdp_input_mode';
+const KEY_IFRAME_BYPASS = 'iframe_bypass_enabled';
+const KEY_SPA_NETIDLE = 'spa_network_idle_ms';
+const KEY_SPA_DOMSTABLE = 'spa_dom_stable_ms';
+const KEY_VIEWPORT_W = 'agent_viewport_width';
+const KEY_VIEWPORT_H = 'agent_viewport_height';
+// Long-running process monitoring keys (v3.1)
+const KEY_WAIT_TIMEOUT = 'wait_timeout_default';
+const KEY_WAIT_ERROR_DETECT = 'wait_error_detection';
+const KEY_WAIT_STALL_THRESHOLD = 'wait_progress_stall_threshold';
+// Batch mode keys (v4.0)
+const KEY_ACTION_DELAY = 'action_delay_ms';
+const KEY_MAX_ACTIONS = 'max_actions_per_session';
+const KEY_AUTONOMY = 'autonomy_mode';            // 'full' = no confirmation, 'safe' = require human approval
+
+const DEFAULTS = {
+  auth_token: '',
+  user_email: '',
+  model: 'xiaomi/mimo-v2.5',
+  provider: 'protalk',         // protalk | openai | anthropic | ollama
+  api_base_url: '',            // custom endpoint (e.g. OpenRouter, local Ollama)
+  api_key: '',                 // direct API key (for openai/anthropic providers)
+  temperature: 0.2,
+  reasoning: 'low',
+  step_cap: 200,
+  user_context: '',
+  // v3.0 defaults
+  cdp_input_mode: true,          // Use CDP for trusted input events
+  iframe_bypass_enabled: true,   // declarativeNetRequest headers bypass
+  spa_network_idle_ms: 500,      // Network idle threshold (ms)
+  spa_dom_stable_ms: 300,        // DOM stability threshold (ms)
+  agent_viewport_width: 1280,    // Predictable viewport width for AI
+  agent_viewport_height: 800,    // Predictable viewport height for AI
+  // v3.1 long-running process monitoring
+  wait_timeout_default: 120000,   // Default timeout for wait_for_completion (ms)
+  wait_error_detection: true,     // Auto-detect error text during waits
+  wait_progress_stall_threshold: 10, // Polls without progress change before stall
+  // v4.0 batch mode
+  action_delay_ms: 2000,          // Delay between batch actions (ms)
+  max_actions_per_session: 50,    // Max actions per batch session
+  autonomy_mode: 'full'           // 'full' = autonomous (no confirm), 'safe' = require human approval
+};
+
+function readSync() {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get(DEFAULTS, (items) => {
+      resolve({
+        // Secrets are NOT read from sync — they live in chrome.storage.local only
+        user_email: items[KEY_EMAIL] || '',
+        model: items[KEY_MODEL] || DEFAULTS.model,
+        provider: items[KEY_PROVIDER] || DEFAULTS.provider,
+        api_base_url: items[KEY_API_BASE] || '',
+        temperature: typeof items[KEY_TEMP] === 'number' ? items[KEY_TEMP] : DEFAULTS.temperature,
+        reasoning: items[KEY_REAS] || DEFAULTS.reasoning,
+        step_cap: typeof items[KEY_STEPCAP] === 'number' ? items[KEY_STEPCAP] : DEFAULTS.step_cap,
+        user_context: items[KEY_USERCTX] || '',
+        remote_config_url: items[KEY_REMOTECFG] || '',
+        // v3.0
+        cdp_input_mode: items[KEY_CDP_INPUT] !== undefined ? !!items[KEY_CDP_INPUT] : DEFAULTS.cdp_input_mode,
+        iframe_bypass_enabled: items[KEY_IFRAME_BYPASS] !== undefined ? !!items[KEY_IFRAME_BYPASS] : DEFAULTS.iframe_bypass_enabled,
+        spa_network_idle_ms: typeof items[KEY_SPA_NETIDLE] === 'number' ? items[KEY_SPA_NETIDLE] : DEFAULTS.spa_network_idle_ms,
+        spa_dom_stable_ms: typeof items[KEY_SPA_DOMSTABLE] === 'number' ? items[KEY_SPA_DOMSTABLE] : DEFAULTS.spa_dom_stable_ms,
+        agent_viewport_width: typeof items[KEY_VIEWPORT_W] === 'number' ? items[KEY_VIEWPORT_W] : DEFAULTS.agent_viewport_width,
+        agent_viewport_height: typeof items[KEY_VIEWPORT_H] === 'number' ? items[KEY_VIEWPORT_H] : DEFAULTS.agent_viewport_height,
+        // v3.1
+        wait_timeout_default: typeof items[KEY_WAIT_TIMEOUT] === 'number' ? items[KEY_WAIT_TIMEOUT] : DEFAULTS.wait_timeout_default,
+        wait_error_detection: items[KEY_WAIT_ERROR_DETECT] !== undefined ? !!items[KEY_WAIT_ERROR_DETECT] : DEFAULTS.wait_error_detection,
+        wait_progress_stall_threshold: typeof items[KEY_WAIT_STALL_THRESHOLD] === 'number' ? items[KEY_WAIT_STALL_THRESHOLD] : DEFAULTS.wait_progress_stall_threshold,
+        // v4.0 batch mode
+        action_delay_ms: typeof items[KEY_ACTION_DELAY] === 'number' ? items[KEY_ACTION_DELAY] : DEFAULTS.action_delay_ms,
+        max_actions_per_session: typeof items[KEY_MAX_ACTIONS] === 'number' ? items[KEY_MAX_ACTIONS] : DEFAULTS.max_actions_per_session,
+        autonomy_mode: items[KEY_AUTONOMY] || DEFAULTS.autonomy_mode
+      });
+    });
+  });
+}
+
+/** Read secrets from chrome.storage.local (device-local, never synced). */
+function readLocalSecrets() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get([KEY_TOKEN, KEY_API_KEY], (items) => {
+      resolve({
+        auth_token: items[KEY_TOKEN] || '',
+        api_key: items[KEY_API_KEY] || ''
+      });
+    });
+  });
+}
+
+function readLocalCache() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['settings_cache'], (items) => {
+      resolve(items.settings_cache || null);
+    });
+  });
+}
+
+function writeLocalCache(s) {
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ settings_cache: s }, () => resolve());
+  });
+}
+
+export async function getSettings() {
+  const base = await readSync();
+  const secrets = await readLocalSecrets();
+  // Merge: secrets from local storage override sync (where they no longer live)
+  const withSecrets = { ...base, ...stripEmpty(secrets) };
+
+  const remoteUrl = base.remote_config_url;
+  if (remoteUrl) {
+    try {
+      const remote = await fetchRemoteConfig(remoteUrl);
+      if (remote) {
+        // merge: remote fills empty fields, never overwrites populated ones locally
+        // IMPORTANT: remote config is NEVER allowed to import secrets
+        delete remote.auth_token;
+        delete remote.api_key;
+        const merged = { ...remote, ...stripEmpty(withSecrets) };
+        // Mirror to local cache so we have something even if remote is down
+        writeLocalCache(merged);
+        return merged;
+      }
+    } catch (e) {
+      // Remote failed → fall back to local cache, then to sync
+      const cached = await readLocalCache();
+      if (cached) return { ...cached, ...stripEmpty(withSecrets) };
+    }
+  }
+  return withSecrets;
+}
+
+export function setSettings(partial) {
+  return new Promise((resolve) => {
+    const syncPatch = {};
+    const localPatch = {};
+
+    // Secrets go to chrome.storage.local (device-local, never synced)
+    if (partial.auth_token !== undefined) localPatch[KEY_TOKEN] = partial.auth_token;
+    if (partial.api_key !== undefined) localPatch[KEY_API_KEY] = partial.api_key;
+
+    // Everything else goes to chrome.storage.sync
+    if (partial.user_email !== undefined) syncPatch[KEY_EMAIL] = partial.user_email;
+    if (partial.model !== undefined) syncPatch[KEY_MODEL] = partial.model;
+    if (partial.provider !== undefined) syncPatch[KEY_PROVIDER] = partial.provider;
+    if (partial.api_base_url !== undefined) syncPatch[KEY_API_BASE] = partial.api_base_url;
+    if (partial.temperature !== undefined) syncPatch[KEY_TEMP] = partial.temperature;
+    if (partial.reasoning !== undefined) syncPatch[KEY_REAS] = partial.reasoning;
+    if (partial.step_cap !== undefined) syncPatch[KEY_STEPCAP] = partial.step_cap;
+    if (partial.user_context !== undefined) syncPatch[KEY_USERCTX] = partial.user_context;
+    if (partial.remote_config_url !== undefined) syncPatch[KEY_REMOTECFG] = partial.remote_config_url;
+    // v3.0
+    if (partial.cdp_input_mode !== undefined) syncPatch[KEY_CDP_INPUT] = !!partial.cdp_input_mode;
+    if (partial.iframe_bypass_enabled !== undefined) syncPatch[KEY_IFRAME_BYPASS] = !!partial.iframe_bypass_enabled;
+    if (partial.spa_network_idle_ms !== undefined) syncPatch[KEY_SPA_NETIDLE] = Math.max(100, Math.min(5000, partial.spa_network_idle_ms));
+    if (partial.spa_dom_stable_ms !== undefined) syncPatch[KEY_SPA_DOMSTABLE] = Math.max(50, Math.min(3000, partial.spa_dom_stable_ms));
+    if (partial.agent_viewport_width !== undefined) syncPatch[KEY_VIEWPORT_W] = Math.max(320, Math.min(3840, partial.agent_viewport_width));
+    if (partial.agent_viewport_height !== undefined) syncPatch[KEY_VIEWPORT_H] = Math.max(240, Math.min(2160, partial.agent_viewport_height));
+    // v3.1
+    if (partial.wait_timeout_default !== undefined) syncPatch[KEY_WAIT_TIMEOUT] = Math.max(10000, Math.min(600000, partial.wait_timeout_default));
+    if (partial.wait_error_detection !== undefined) syncPatch[KEY_WAIT_ERROR_DETECT] = !!partial.wait_error_detection;
+    if (partial.wait_progress_stall_threshold !== undefined) syncPatch[KEY_WAIT_STALL_THRESHOLD] = Math.max(3, Math.min(100, partial.wait_progress_stall_threshold));
+
+    // v4.0 batch mode
+    if (partial.action_delay_ms !== undefined) syncPatch[KEY_ACTION_DELAY] = Math.max(500, Math.min(30000, partial.action_delay_ms));
+    if (partial.max_actions_per_session !== undefined) syncPatch[KEY_MAX_ACTIONS] = Math.max(1, Math.min(500, partial.max_actions_per_session));
+    if (partial.autonomy_mode !== undefined) syncPatch[KEY_AUTONOMY] = partial.autonomy_mode === 'safe' ? 'safe' : 'full';
+
+    // Write both stores in parallel
+    let done = 0;
+    const finish = () => { if (++done >= 2) resolve({ ok: true }); };
+    if (Object.keys(localPatch).length) {
+      chrome.storage.local.set(localPatch, finish);
+    } else {
+      finish();
+    }
+    if (Object.keys(syncPatch).length) {
+      chrome.storage.sync.set(syncPatch, finish);
+    } else {
+      finish();
+    }
+  });
+}
+
+export function clearSettings() {
+  return new Promise((resolve) => {
+    chrome.storage.sync.clear(() => {
+      chrome.storage.local.remove([KEY_TOKEN, KEY_API_KEY, 'settings_cache'], () => resolve({ ok: true }));
+    });
+  });
+}
+
+function stripEmpty(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== '' && v != null) out[k] = v;
+  }
+  return out;
+}

@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>WebClaw — AI Browser Agent</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      width: 420px;
+      margin: 0;
+      font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f1115;
+      color: #e6e8eb;
+      padding: 12px;
+    }
+    h1 { font-size: 16px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+    .logo { font-size: 20px; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: #555; }
+    .dot.idle    { background: #374151; }
+    .dot.working { background: #16a34a; box-shadow: 0 0 6px #16a34a; }
+    .dot.paused  { background: #ca8a04; box-shadow: 0 0 6px #ca8a04; }
+    .dot.error   { background: #dc2626; }
+    label { display: block; font-size: 11px; color: #9aa3af; margin: 8px 0 4px; }
+    textarea, input[type=number] {
+      width: 100%;
+      resize: vertical;
+      background: #1a1d24;
+      color: #e6e8eb;
+      border: 1px solid #2a2f3a;
+      border-radius: 6px;
+      padding: 8px;
+      font: inherit;
+    }
+    textarea { min-height: 70px; }
+    textarea.small { min-height: 50px; }
+    input[type=number] { width: 80px; }
+    textarea:focus, input:focus { outline: none; border-color: #5b8def; }
+    .row { display: flex; gap: 6px; margin-top: 10px; }
+    button {
+      flex: 1;
+      padding: 8px 10px;
+      border: 0; border-radius: 6px;
+      font: inherit; cursor: pointer;
+      background: #2a2f3a; color: #e6e8eb;
+    }
+    button.primary { background: #2563eb; }
+    button.primary:hover { background: #1d4fd1; }
+    button.danger  { background: #b91c1c; }
+    button.warn    { background: #ca8a04; }
+    button.ghost   { background: transparent; border: 1px solid #2a2f3a; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .meta { font-size: 11px; color: #9aa3af; margin-top: 8px; display: flex; gap: 12px; flex-wrap: wrap; }
+    .log {
+      margin-top: 10px;
+      max-height: 180px;
+      overflow: auto;
+      background: #0b0d11;
+      border: 1px solid #1f2330;
+      border-radius: 6px;
+      padding: 6px 8px;
+      font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: #cbd5e1;
+      white-space: pre-wrap;
+    }
+    .log .err { color: #fca5a5; }
+    .log .ok  { color: #86efac; }
+    .log .act { color: #93c5fd; }
+    .check { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #9aa3af; margin-top: 6px; }
+
+    /* Preset Tasks */
+    .presets {
+      margin: 12px 0;
+      padding: 10px;
+      background: #11141b;
+      border-radius: 8px;
+      border: 1px solid #1f2330;
+    }
+    .presets-title {
+      font-size: 11px;
+      color: #9aa3af;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .presets-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+    .preset-btn {
+      padding: 8px 10px;
+      background: #1a1d24;
+      color: #e6e8eb;
+      border: 1px solid #2a2f3a;
+      border-radius: 6px;
+      font-size: 11px;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .preset-btn:hover {
+      background: #2563eb;
+      border-color: #2563eb;
+    }
+    .preset-btn .icon { font-size: 14px; }
+    .preset-btn .badge {
+      margin-left: auto;
+      font-size: 9px;
+      background: #374151;
+      padding: 2px 5px;
+      border-radius: 3px;
+    }
+    .preset-btn .badge.popular { background: #16a34a; }
+
+    /* Export button */
+    .export-btn {
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: white;
+      font-weight: 500;
+    }
+    .export-btn:hover {
+      background: linear-gradient(135deg, #059669, #047857);
+    }
+
+    /* Phase indicator */
+    .phase-indicator {
+      margin: 8px 0;
+      display: none;
+    }
+    .phase-indicator.active { display: block; }
+    .phase-bar {
+      display: flex;
+      gap: 2px;
+      margin-bottom: 4px;
+    }
+    .phase-step {
+      flex: 1;
+      height: 4px;
+      border-radius: 2px;
+      background: #1f2330;
+      transition: background 0.3s;
+    }
+    .phase-step.done { background: #16a34a; }
+    .phase-step.current { background: #38bdf8; animation: pulse-bar 1.5s ease-in-out infinite; }
+    .phase-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 9px;
+      color: #6b7280;
+    }
+    @keyframes pulse-bar {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* Batch progress */
+    .batch-progress {
+      margin: 8px 0;
+      padding: 8px 10px;
+      background: #11141b;
+      border: 1px solid #1f2330;
+      border-radius: 6px;
+      display: none;
+      font-size: 11px;
+    }
+    .batch-progress.active { display: block; }
+    .batch-progress .bar-track {
+      width: 100%;
+      height: 6px;
+      background: #1f2330;
+      border-radius: 3px;
+      overflow: hidden;
+      margin: 6px 0;
+    }
+    .batch-progress .bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #16a34a, #4ade80);
+      border-radius: 3px;
+      transition: width 0.3s ease;
+      width: 0%;
+    }
+    .batch-stats {
+      display: flex;
+      gap: 10px;
+      margin-top: 4px;
+      font-size: 10px;
+      color: #9aa3af;
+    }
+    .batch-stats .stat-ok { color: #86efac; }
+    .batch-stats .stat-fail { color: #fca5a5; }
+    .batch-stats .stat-skip { color: #facc15; }
+
+    /* Confirmation panel */
+    .confirm-panel {
+      margin: 8px 0;
+      padding: 8px 10px;
+      background: #1a1507;
+      border: 1px solid #ca8a04;
+      border-radius: 6px;
+      display: none;
+      font-size: 11px;
+    }
+    .confirm-panel.active { display: block; }
+    .confirm-panel .confirm-title {
+      color: #facc15;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .confirm-panel .confirm-list {
+      max-height: 120px;
+      overflow: auto;
+      margin: 4px 0;
+      font-size: 10px;
+      color: #cbd5e1;
+    }
+    .confirm-panel .confirm-actions {
+      display: flex;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .confirm-panel button.approve {
+      background: #16a34a;
+      color: white;
+      flex: 2;
+    }
+    .confirm-panel button.reject {
+      background: #b91c1c;
+      color: white;
+      flex: 1;
+    }
+  </style>
+</head>
+<body>
+  <h1><span class="logo">🦞</span> <span class="dot" id="dot"></span> WebClaw</h1>
+
+  <!-- Quick Preset Tasks -->
+  <div class="presets">
+    <div class="presets-title">⚡ Quick Actions</div>
+    <div class="presets-grid">
+      <button class="preset-btn" data-task="Apply to all suitable jobs on this page" data-context="Search for jobs matching my experience. Auto-fill applications with my resume details. Skip jobs requiring login if not logged in.">
+        <span class="icon">💼</span> Auto-apply jobs
+        <span class="badge popular">popular</span>
+      </button>
+      <button class="preset-btn" data-task="Extract all email addresses from this page and save them" data-context="Find all email addresses visible on the page. Format as a clean list.">
+        <span class="icon">📧</span> Extract emails
+      </button>
+      <button class="preset-btn" data-task="Add all items to cart on this shopping page" data-context="Click 'Add to cart' for each product. Skip out-of-stock items.">
+        <span class="icon">🛒</span> Add all to cart
+      </button>
+      <button class="preset-btn" data-task="Fill out this form with my information" data-context="Use my name, email, phone and other details from the context to fill all form fields.">
+        <span class="icon">📝</span> Fill form
+      </button>
+      <button class="preset-btn" data-task="Take a screenshot of each section and summarize the page content" data-context="Scroll through the entire page, capturing key sections. Provide a structured summary.">
+        <span class="icon">📸</span> Screenshot & summarize
+      </button>
+      <button class="preset-btn" data-task="Monitor this page for changes and notify me when something updates" data-context="Check every 30 seconds for new content, price changes, or availability updates.">
+        <span class="icon">👁️</span> Monitor changes
+        <span class="badge">new</span>
+      </button>
+    </div>
+  </div>
+
+  <label for="task">Task</label>
+  <textarea id="task" placeholder="e.g., Apply to all jobs on this page, extract product prices, fill out this form..."></textarea>
+
+  <label for="context">Context (resume, contacts, cover letter)</label>
+  <textarea id="context" class="small" placeholder="Your name, email, experience, what to write in cover letters..."></textarea>
+
+  <div class="row">
+    <div style="flex:2">
+      <label for="url">Start URL (optional)</label>
+      <input id="url" type="text" placeholder="https://example.com/page" />
+    </div>
+    <div style="flex:1">
+      <label for="stepcap">Step limit</label>
+      <input id="stepcap" type="number" min="1" max="2000" value="200" />
+    </div>
+  </div>
+
+  <label class="check"><input type="checkbox" id="dry" /> Dry-run (show actions without executing)</label>
+
+  <div class="row">
+    <button id="start" class="primary">▶ Start</button>
+    <button id="pause" class="warn" disabled>⏸ Pause</button>
+    <button id="stop" class="danger" disabled>■ Stop</button>
+  </div>
+  <div class="row">
+    <button id="export-html" class="export-btn">📥 HTML Report</button>
+    <button id="export-api" class="ghost">📡 API Log</button>
+  </div>
+  <div class="row">
+    <button id="logs" class="ghost">📜 Open Logs</button>
+    <button id="options" class="ghost">⚙ Settings</button>
+  </div>
+
+  <div class="meta" id="meta">Steps: 0 · Model: —</div>
+
+  <!-- Phase indicator -->
+  <div class="phase-indicator" id="phase-indicator">
+    <div class="phase-bar">
+      <div class="phase-step" id="phase-plan" title="Planning"></div>
+      <div class="phase-step" id="phase-extract" title="Extracting"></div>
+      <div class="phase-step" id="phase-filter" title="Filtering"></div>
+      <div class="phase-step" id="phase-confirm" title="Confirming"></div>
+      <div class="phase-step" id="phase-execute" title="Executing"></div>
+    </div>
+    <div class="phase-labels">
+      <span>Plan</span><span>Extract</span><span>Filter</span><span>Confirm</span><span>Execute</span>
+    </div>
+  </div>
+
+  <!-- Batch progress -->
+  <div class="batch-progress" id="batch-progress">
+    <div id="batch-status">Processing...</div>
+    <div class="bar-track"><div class="bar-fill" id="batch-bar"></div></div>
+    <div class="batch-stats">
+      <span>✅ <span class="stat-ok" id="batch-ok">0</span></span>
+      <span>❌ <span class="stat-fail" id="batch-fail">0</span></span>
+      <span>⏭ <span class="stat-skip" id="batch-skip">0</span></span>
+      <span>⏳ <span id="batch-pending">0</span></span>
+    </div>
+  </div>
+
+  <!-- Confirmation panel -->
+  <div class="confirm-panel" id="confirm-panel">
+    <div class="confirm-title" id="confirm-title">⚠ Confirm batch action</div>
+    <div class="confirm-list" id="confirm-list"></div>
+    <div class="confirm-actions" id="confirm-actions">
+      <button class="approve" id="confirm-approve">✓ Confirm</button>
+      <button class="reject" id="confirm-reject">✗ Cancel</button>
+    </div>
+    <div class="confirm-actions" id="confirm-pause-actions" style="display:none">
+      <button class="approve" id="confirm-continue">▶ Continue Batch</button>
+    </div>
+  </div>
+
+  <div class="log" id="log"></div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
