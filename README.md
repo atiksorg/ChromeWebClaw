@@ -1,5 +1,3 @@
-[![WebClaw](https://wl.atiks.org/helpers/webclaw/webclaw_logo.jpg)](WebClaw)
-
 # 🦞 WebClaw
 
 > **An autonomous AI agent that lives in a hidden browser tab and drives any website by sight.**
@@ -9,6 +7,8 @@
 [![GitHub Stars](https://img.shields.io/github/stars/yourusername/webclaw)]()
 
 ---
+
+[![WebClaw](https://wl.atiks.org/helpers/webclaw/webclaw_logo.jpg)](WebClaw)
 
 ## 🎬 Demo
 
