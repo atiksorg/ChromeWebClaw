@@ -4,7 +4,7 @@
 
 **Автономный ИИ-агент нового поколения для Chrome, который видит веб-страницы глазами и управляет браузером как человек.**
 
-[![Смотреть демо](https://file.pro-talk.ru/ptrn/aHR0cHM6Ly9wYXRyaW5zLmNvbS9hcGkvd2ViZGF2LXVwbG9hZC9iNWJmYTE0N2ViYTQvMTIzMGQ4MGUtMjZiNC00YThkLWJkYmYtOTQ2YWU4YjUzZmRmLmpwZ3x8cGF0cmluc19iOWIxYWU4M2ZlNmQ4MmNmMzAxZWUzM2I1NGJmYjAyY2FiNjJlZDgyYjlmOWExNDU1Mzk1YmYwMTY1NWRhZDk0.jpg)](https://www.youtube.com/watch?v=D6kIEC4QcX0)
+[![Смотреть демо](https://file.pro-talk.ru/ptrn/aHR0cHM6Ly9wYXRyaW5zLmNvbS9hcGkvd2ViZGF2LXVwbG9hZC85MjU5YTQ5YTUyYzcvNDA4ZmYwMTUtZDZjNC00MjE0LTljZDMtZTlhMWFiOTRmZjlkLmpwZ3x8cGF0cmluc19iOWIxYWU4M2ZlNmQ4MmNmMzAxZWUzM2I1NGJmYjAyY2FiNjJlZDgyYjlmOWExNDU1Mzk1YmYwMTY1NWRhZDk0.jpg)](https://www.youtube.com/watch?v=D6kIEC4QcX0)
 
 [![Manifest V3](https://img.shields.io/badge/Chrome-Manifest_V3-blue.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![Vision First](https://img.shields.io/badge/Architecture-Vision--First-6366f1.svg)]()
