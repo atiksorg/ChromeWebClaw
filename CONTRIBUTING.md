@@ -1,4 +1,4 @@
-# Contributing to WebClaw
+# Contributing to WebClaw by ProTalk
 
 Thanks for your interest in contributing! 🎉
 
@@ -121,4 +121,4 @@ By contributing, you agree that your contributions will be licensed under the MI
 
 ## 🙏 Thank You!
 
-Your contributions make WebClaw better for everyone!
+Your contributions make WebClaw by ProTalk better for everyone!

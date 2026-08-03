@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to WebClaw will be documented in this file.
+All notable changes to WebClaw by ProTalk  will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Activity log with timestamps
   - Action details
   - Success/failure tracking
-- 🦞 **WebClaw Branding**: Renamed from ProTalk Chrome Claw
+- 🦞 **WebClaw by ProTalk Branding**: Renamed from ProTalk Chrome Claw
 - 📖 **Professional README**: Landing page with demos and comparisons
 - 📝 **Documentation**: CONTRIBUTING.md, LICENSE, CHANGELOG
 

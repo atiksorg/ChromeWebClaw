@@ -1,6 +1,10 @@
-# 🦞 WebClaw v5.0 — Vision-First AI Browser Agent
+# 🦞 WebClaw by ProTalk v5.0 — Vision-First AI Browser Agent
+
+> **Разработано в [ProTalk Codex](https://codex.lubanyacloud.ru)** — ИИ-инженер для вашего сервера. SSH · AI · Автономный агент.
 
 **Автономный ИИ-агент нового поколения для Chrome, который видит веб-страницы глазами и управляет браузером как человек.**
+
+[![Смотреть демо](https://file.pro-talk.ru/ptrn/aHR0cHM6Ly9wYXRyaW5zLmNvbS9hcGkvd2ViZGF2LXVwbG9hZC9iNWJmYTE0N2ViYTQvMTIzMGQ4MGUtMjZiNC00YThkLWJkYmYtOTQ2YWU4YjUzZmRmLmpwZ3x8cGF0cmluc19iOWIxYWU4M2ZlNmQ4MmNmMzAxZWUzM2I1NGJmYjAyY2FiNjJlZDgyYjlmOWExNDU1Mzk1YmYwMTY1NWRhZDk0.jpg)](https://www.youtube.com/watch?v=D6kIEC4QcX0)
 
 [![Manifest V3](https://img.shields.io/badge/Chrome-Manifest_V3-blue.svg)](https://developer.chrome.com/docs/extensions/mv3/intro/)
 [![Vision First](https://img.shields.io/badge/Architecture-Vision--First-6366f1.svg)]()
@@ -10,9 +14,9 @@
 
 ## 1. Что это такое
 
-**WebClaw** — это Chrome-расширение, превращающее любую мультимодальную ИИ-модель (Gemini 2.5/3.1, Claude 3.5, GPT-4o, Kimi, Llama 3.2 Vision) в вашего личного браузерного ассистента.
+**WebClaw by ProTalk** — это Chrome-расширение, превращающее ИИ-модели, доступные через [ProTalk Async Router](https://pro-talk.ru), в вашего личного браузерного ассистента.
 
-В отличие от классических скриптов автоматизации, WebClaw **не зависит от верстки сайта, HTML-кода и CSS-селекторов**. Он работает по принципу **Computer Use**: «смотрит» на скриншот страницы, принимает решение, думает на человеческом языке и кликает по координатам экрана с помощью реальных системных событий мыши и клавиатуры.
+В отличие от классических скриптов автоматизации, WebClaw by ProTalk **не зависит от верстки сайта, HTML-кода и CSS-селекторов**. Он работает по принципу **Computer Use**: «смотрит» на скриншот страницы, принимает решение, думает на человеческом языке и кликает по координатам экрана с помощью реальных системных событий мыши и клавиатуры.
 
 Вы просто говорите ему обычными словами:
 - *«Найди на hh.ru 10 подходящих вакансий под мое резюме и откликнись на них»*
@@ -60,7 +64,7 @@
 │  1. Capture Screenshot (CDP Page.captureScreenshot)                    │
 │  2. Visual Stagnation Check (Сравнение хэшей скриншота)               │
 │  3. Build Vision Prompt (Скриншот + Память + Блокнот Scratchpad)       │
-│  4. Call AI Model (Gemini / Claude / OpenAI Router)                    │
+│  4. Call AI Model (ProTalk Async Router)                               │
 │  5. Parse Response -> Extract Thinking + Tool                          │
 │  6. Scale Normalized Coords (0-1000 -> Viewport Pixels)                │
 │  7. Execute CDP Trusted Event (Mouse Click / Type / Key Press)         │
@@ -103,14 +107,14 @@
 
 ### 2. Настройка подключения
 1. Нажмите на иконку расширения $\rightarrow$ **⚙ Настройки**.
-2. Выберите провайдера (ProTalk Async Router, OpenAI / OpenRouter, Anthropic Claude, Ollama).
-3. Укажите ваш **Auth Token** / **API Key** и выберите модель (рекомендуется `google/gemini-3.1-flash-lite-preview` или `anthropic/claude-3.5-sonnet`).
+2. Укажите ваш **Auth Token** и **Email** (аккаунт ProTalk).
+3. Выберите модель (рекомендуется `google/gemini-3.1-flash-lite-preview` или `xiaomi/mimo-v2.5`).
 4. Включите галочку **`Vision-First Mode`** и **`Direct Tab Mode`**.
 5. Заполните поле **«Контекст пользователя»** (ваше резюме, имя, контакты).
 
 ### 3. Запуск задачи
 1. Перейдите на целевой сайт (например, `hh.ru`).
-2. Откройте попап WebClaw, введите задачу или выберите один из **6 готовых быстрых шаблонов**.
+2. Откройте попап WebClaw by ProTalk, введите задачу или выберите один из **6 готовых быстрых шаблонов**.
 3. Нажмите **▶ Старт**.
 4. Нажмите **📊 Монитор**, чтобы открыть боковую панель и наблюдать за рассуждениями и действиями агента в реальном времени.
 
@@ -136,7 +140,7 @@ extension/
 ```
 
 ### Живучесть Service Worker (Manifest V3)
-Service Worker в MV3 выгружается каждые ~30 секунд простоя. WebClaw обеспечивает **100% сохранение состояния**:
+Service Worker в MV3 выгружается каждые ~30 секунд простоя. WebClaw by ProTalk обеспечивает **100% сохранение состояния**:
 - После каждого шага полные данные сессии сохраняются в `chrome.storage.session`.
 - Фоновый `chrome.alarms` каждые ~25 секунд поддерживает воркер «живым».
 - При перезапуске воркера функция `attemptResume()` бесшовно восстанавливает сессию с последнего шага без потери прогресса.
@@ -152,6 +156,24 @@ Service Worker в MV3 выгружается каждые ~30 секунд пр�
 
 2. **API-лог (для отладки):**
    Чистый текстовый файл с готовыми `CURL`-командами для каждого запроса к ИИ, включая все заголовки, тела запросов и сырые ответы сервера.
+
+---
+
+## 🛠 Разработано в ProTalk Codex
+
+Это расширение было целиком написано с использованием [**ProTalk Codex**](https://codex.lubanyacloud.ru) — ИИ-инженера для вашего сервера.
+
+ProTalk Codex — это автономный агент, который подключается к серверу по SSH, изучает проект, составляет план и вносит изменения. Работает через российский ИИ-роутер, без VPN.
+
+**Что умеет ProTalk Codex:**
+- 🔍 Автономное исследование файловой базы проекта
+- 📋 Составление плана перед любыми правками (с вашим подтверждением)
+- 🛡️ Все изменения — только в черновиках, с возможностью отката
+- ✨ Самопроверка кода перед завершением задачи
+- 🧠 Умное управление контекстом — только релевантные файлы
+- 📝 Полная история изменений с двухпанельным diff
+
+[⚡ Попробовать ProTalk Codex](https://codex.lubanyacloud.ru) · [📖 Документация](https://pro-talk.ru) · [💬 Telegram](https://t.me/protalk)
 
 ---
 
